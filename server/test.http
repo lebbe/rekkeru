@@ -1,0 +1,5 @@
+@baseUrl = http://localhost:3000
+
+GET {{baseUrl}}/api/v1/screen HTTP/1.1
+Authorization: Bearer {{$dotenv API_KEY}}
+Accept: application/json
