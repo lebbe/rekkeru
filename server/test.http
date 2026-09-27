@@ -1,4 +1,4 @@
-@baseUrl = http://localhost:3000
+@baseUrl = https://rekkeru.blurt.trade
 
 GET {{baseUrl}}/api/v1/screen HTTP/1.1
 Authorization: Bearer {{$dotenv API_KEY}}

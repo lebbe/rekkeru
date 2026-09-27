@@ -9,7 +9,21 @@ The project has two parts:
 
 ## Run the server
 
-Install Node.js LTS, then in `server/` install dependencies and copy `.env.sample` to `.env`. Set a 64-character hexadecimal `API_KEY`, an identifying `UA_STRING`, and optionally `SECRET_ICAL_ADDRESS`. Use the same API key in the firmware.
+Install Node.js LTS, then in `server/` install dependencies:
+
+```
+npm ci
+```
+
+## Create .env
+
+Copy `.env.sample` to `.env`. Set a 64-character hexadecimal `API_KEY`, an identifying `UA_STRING`, and `SECRET_ICAL_ADDRESS`. Use the same API key in the firmware.
+
+- `API_KEY` Unique secret 64-character hexadecimal.
+- `UA_STRING` A string that identifyes you, used as user agent string.
+- `SECRET_ICAL_ADDRESS` Point to an URL delivering your calendar in ical format.
+- `DEPLOY_HOST` Used for deploying, username and host on deploy server.
+- `WEATHER_QUERY` query-part of met.no API URL, to get your personal location.
 
 ```sh
 npm install
@@ -29,6 +43,8 @@ npm run deploy
 ```
 
 The host's `.env` is copied from `server/.env`. Keep it private; it contains the API key and calendar-feed address. The image name in `server/deploy.sh` must match the published GHCR image before deploying.
+
+THIS WILL DEPLOY THE DOCKER IMAGE BUILT FOR THE OFFICIAL [REKKERU](https://github.com/lebbe/rekkeru) REPOSITORY. If you create a fork of this repo, and want to deploy your own version, you need to adjust docker.yaml etc accordingly.
 
 ## Build and upload the firmware
 

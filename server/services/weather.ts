@@ -1,6 +1,6 @@
-const URL =
-  'https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=59.874&lon=10.811&altitude=150'
 const UA = process.env.UA_STRING
+const WEATHER_QUERY = process.env.WEATHER_QUERY
+const URL = `https://api.met.no/weatherapi/locationforecast/2.0/compact?${WEATHER_QUERY}`
 
 const TEXT = {
   clearsky: 'Klarvær',
