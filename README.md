@@ -9,13 +9,15 @@ The project has two parts:
 
 ## Run the server
 
+### Install dependencies
+
 Install Node.js LTS, then in `server/` install dependencies:
 
-```
+```sh
 npm ci
 ```
 
-## Create .env
+### Create .env
 
 Copy `.env.sample` to `.env`. Set a 64-character hexadecimal `API_KEY`, an identifying `UA_STRING`, and `SECRET_ICAL_ADDRESS`. Use the same API key in the firmware.
 
@@ -27,12 +29,31 @@ Copy `.env.sample` to `.env`. Set a 64-character hexadecimal `API_KEY`, an ident
 - `ENTUR_STOP` The entur id of the stop for where you want to list departures.
 - `ENTUR_FILTER` OPTOINAL If you only want to list specific lines, you can filter the interesting ones here.
 
+### Start the server
+
 ```sh
-npm install
 npm start
 ```
 
 The API listens on port 3000 by default.
+
+## Build and upload the firmware
+
+Install the PlatformIO CLI. Copy `firmware/include/secrets.example.h` to `firmware/include/secrets.h` and set the Wi-Fi credentials, matching `API_KEY`, and `SERVER_URL` to the server's address wherever you run the server.
+
+```sh
+cd firmware
+pio run
+pio run -t upload
+```
+
+If pio is not in your PATH and you won't bother (just as me) you can just invoke it via python instead:
+
+```sh
+cd firmware
+python -m platformio run
+python -m platformio run -t upload
+```
 
 ## Deploy the server with Docker
 
@@ -47,13 +68,3 @@ npm run deploy
 The host's `.env` is copied from `server/.env`. Keep it private; it contains the API key and calendar-feed address. The image name in `server/deploy.sh` must match the published GHCR image before deploying.
 
 THIS WILL DEPLOY THE DOCKER IMAGE BUILT FOR THE OFFICIAL [REKKERU](https://github.com/lebbe/rekkeru) REPOSITORY. If you create a fork of this repo, and want to deploy your own version, you need to adjust docker.yaml etc accordingly.
-
-## Build and upload the firmware
-
-Install the PlatformIO CLI. Copy `firmware/include/secrets.example.h` to `firmware/include/secrets.h` and set the Wi-Fi credentials, matching `API_KEY`, and `SERVER_URL` to the server's address on your local network.
-
-```sh
-cd firmware
-pio run
-pio run -t upload
-```
