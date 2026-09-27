@@ -1,8 +1,8 @@
 import crypto from 'node:crypto'
 import express from 'express'
-import getDepartures from './services/departures.js'
-import { getWeather } from './services/weather.js'
-import getCalendar from './services/calendar.js'
+import getDepartures from './services/departures.ts'
+import { getWeather } from './services/weather.ts'
+import getCalendar from './services/calendar.ts'
 
 const configuredToken = process.env.API_KEY
 
@@ -17,7 +17,7 @@ app.get('/api/v1/screen', async (req, res) => {
   const authorization = req.get('authorization') || ''
   const match = /^Bearer ([a-fA-F0-9]{64})$/i.exec(authorization)
 
-  if (!match) {
+  if (!match?.[1]) {
     return res.status(418).send("I'm a tea pot.").end()
   }
 
