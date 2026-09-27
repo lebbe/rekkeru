@@ -1,4 +1,7 @@
-const STOP = 'NSR:StopPlace:58245' // Lambertseter (bus + metro)
+const STOP = process.env.ENTUR_STOP
+const FILTER = process.env.ENTUR_FILTER || ''
+const regexFilter = new RegExp(FILTER, 'g')
+
 const QUERY = `query ($id: String!, $start: DateTime!) {
   stopPlace(id: $id) {
     estimatedCalls(startTime: $start, numberOfDepartures: 20, whiteListedModes: [metro]) {
@@ -47,7 +50,7 @@ async function fetchDepartures(
       dest: call.destinationDisplay.frontText,
       time: Math.floor(Date.parse(call.expectedDepartureTime) / 1000),
     }))
-    .filter((departure) => departure.dest !== 'Bergkrystallen')
+    .filter((departure) => departure.dest.match(regexFilter))
 }
 
 export default async function getDepartures(

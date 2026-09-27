@@ -24,6 +24,8 @@ Copy `.env.sample` to `.env`. Set a 64-character hexadecimal `API_KEY`, an ident
 - `SECRET_ICAL_ADDRESS` Point to an URL delivering your calendar in ical format.
 - `DEPLOY_HOST` Used for deploying, username and host on deploy server.
 - `WEATHER_QUERY` query-part of met.no API URL, to get your personal location.
+- `ENTUR_STOP` The entur id of the stop for where you want to list departures.
+- `ENTUR_FILTER` OPTOINAL If you only want to list specific lines, you can filter the interesting ones here.
 
 ```sh
 npm install
