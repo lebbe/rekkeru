@@ -18,6 +18,18 @@ npm start
 
 The API listens on port 3000 by default.
 
+## Deploy the server with Docker
+
+The GitHub Actions workflow is intended to build the server image and publish it to `ghcr.io/lebbe/rekkeru:latest` when changes under `server/` are pushed to `main`. The container listens on port 3000. On the host, the deploy script runs it bound to `127.0.0.1:3000`, so put a reverse proxy in front of it if it needs to be reachable from outside the host.
+
+To deploy from your development machine, configure `DEPLOY_HOST` in `server/.env` as an SSH destination, make sure Docker and SSH key authentication are set up on that host, and create the remote deployment directory (`~/rekkeru`). Then run from `server/`:
+
+```sh
+npm run deploy
+```
+
+The host's `.env` is copied from `server/.env`. Keep it private; it contains the API key and calendar-feed address. The image name in `server/deploy.sh` must match the published GHCR image before deploying.
+
 ## Build and upload the firmware
 
 Install the PlatformIO CLI. Copy `firmware/include/secrets.example.h` to `firmware/include/secrets.h` and set the Wi-Fi credentials, matching `API_KEY`, and `SERVER_URL` to the server's address on your local network.

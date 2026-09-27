@@ -6,22 +6,23 @@
   "type": "module",
   "scripts": {
     "start": "node --env-file-if-exists=.env index.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "tsc --noEmit",
+    "deploy": "node --env-file-if-exists=.env scripts/deploy.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "express": "^5.2.1",
-    "node-ical": "^0.27.2",
+    "node-ical": "^0.27.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.3",
     "typescript": "^7.0.2"
   },
   "prettier": {
     "semi": false,
     "singleQuote": true
-  },
-  "devDependencies": {
-    "@types/express": "^5.0.6",
-    "@types/node": "^26.6.3"
   }
 }
