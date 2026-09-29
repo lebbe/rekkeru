@@ -31,6 +31,10 @@ float batteryVolts;
 
 void showLocal() {
   mode = Mode::Local;
+  // Read the sensors here, right before they are needed, instead of on every wake: the network
+  // screen never displays them, so reading them on those wakes would just waste I2C/ADC time.
+  climate = readClimate();
+  batteryVolts = readBatteryVolts();
   drawLocalScreen(climate, batteryVolts);
 }
 
@@ -78,9 +82,6 @@ uint32_t secondsToSleep() {
 }
 
 void wake(esp_sleep_wakeup_cause_t cause) {
-  // Read the sensor first, before Wi-Fi heats up the board.
-  climate = readClimate();
-  batteryVolts = readBatteryVolts();
   loadTimeFromRtc();
 
   if (cause == ESP_SLEEP_WAKEUP_EXT0) onKeyPressed();
