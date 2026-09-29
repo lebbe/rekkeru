@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="nb">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rekkeru tale</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, sans-serif;
+      }
+      body {
+        max-width: 32rem;
+        margin: 2rem auto;
+        padding: 0 1rem;
+      }
+      input,
+      button {
+        font: inherit;
+        padding: 0.4rem 0.7rem;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .row {
+        display: flex;
+        gap: 0.5rem;
+        margin: 1rem 0;
+      }
+      dl {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.3rem 1rem;
+      }
+      dt {
+        opacity: 0.7;
+      }
+      meter {
+        width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Rekkeru tale</h1>
+    <p>
+      Testklient for taleskjermen. Den sender mikrofonlyd til serveren på samme
+      måte som skjermen gjør.
+    </p>
+    <label>
+      API-nøkkel
+      <input id="key" type="password" autocomplete="off" />
+    </label>
+    <div class="row">
+      <button id="start">Start</button>
+      <button id="next" disabled>Neste personlighet</button>
+      <button id="stop" disabled>Stopp</button>
+    </div>
+    <dl>
+      <dt>Personlighet</dt>
+      <dd id="persona">–</dd>
+      <dt>Tilstand</dt>
+      <dd id="state">–</dd>
+      <dt>Humør</dt>
+      <dd id="mood">–</dd>
+      <dt>Munn</dt>
+      <dd><meter id="level" max="0.3"></meter></dd>
+    </dl>
+
+    <script type="module">
+      const $ = (id) => document.getElementById(id)
+      let ws, context, stream, player
+
+      try {
+        $('key').value = sessionStorage.getItem('rekkeru-key') ?? ''
+      } catch {}
+
+      async function start() {
+        const key = $('key').value.trim()
+        try {
+          sessionStorage.setItem('rekkeru-key', key)
+        } catch {}
+
+        context = new AudioContext({ sampleRate: 16000 })
+        await context.audioWorklet.addModule('voice-worklet.js')
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+        })
+        const mic = new AudioWorkletNode(context, 'mic')
+        player = new AudioWorkletNode(context, 'player')
+        context.createMediaStreamSource(stream).connect(mic)
+        player.connect(context.destination)
+
+        const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
+        ws = new WebSocket(`${scheme}://${location.host}/api/v1/voice`, ['rekkeru', key])
+        ws.binaryType = 'arraybuffer'
+        mic.port.onmessage = ({ data }) => ws.readyState === 1 && ws.send(data)
+        player.port.onmessage = ({ data }) => {
+          $('level').value = data.level
+          if (data.playing) $('state').textContent = 'snakker'
+        }
+        ws.onmessage = ({ data }) => {
+          if (data instanceof ArrayBuffer) return player.port.postMessage(data, [data])
+          const message = JSON.parse(data)
+          if (message.type === 'persona') {
+            $('persona').textContent = `${message.name} (${message.face})`
+            $('mood').textContent = message.mood
+          }
+          if (message.type === 'state') $('state').textContent = message.state
+          if (message.type === 'mood') $('mood').textContent = message.mood
+          if (message.type === 'interrupted') player.port.postMessage('flush')
+          if (message.type === 'error') $('state').textContent = `feil: ${message.text}`
+        }
+        ws.onclose = () => stop()
+        $('start').disabled = true
+        $('next').disabled = false
+        $('stop').disabled = false
+      }
+
+      function stop() {
+        ws?.close()
+        stream?.getTracks().forEach((track) => track.stop())
+        context?.close()
+        ws = context = stream = player = undefined
+        $('start').disabled = false
+        $('next').disabled = true
+        $('stop').disabled = true
+      }
+
+      $('start').onclick = () => start().catch((err) => alert(err))
+      $('stop').onclick = stop
+      $('next').onclick = () => ws?.send(JSON.stringify({ type: 'next' }))
+    </script>
+  </body>
+</html>

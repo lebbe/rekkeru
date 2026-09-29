@@ -3,7 +3,9 @@
 //   KEY, local screen:    show the loading screen, fetch from the server, draw the network screen.
 //   Timer, network screen: refresh during the first few minutes, then update the countdown without Wi-Fi.
 //                         Return to the local screen after NET_SCREEN_SECONDS.
-//   KEY, network screen: return to the local screen.
+//   KEY, network screen: open the voice screen.
+//   Voice screen:         stay awake and talk (see voice.cpp). KEY, or a few minutes without
+//                         conversation, returns to the local screen. BOOT switches personality.
 //
 // When connected to a PC, the board stays awake and waits instead of sleeping. Deep sleep disconnects
 // USB, which would otherwise make the PC beep every minute and prevent firmware uploads.
@@ -17,6 +19,7 @@
 #include "hardware.h"
 #include "net.h"
 #include "screen.h"
+#include "voice.h"
 
 enum class Mode : uint8_t { Local, Net };
 
@@ -55,6 +58,8 @@ void fetchAndShowNet() {
 
 void onKeyPressed() {
   if (mode == Mode::Net) {
+    waitForKeyRelease();
+    runVoice();  // Blocks until the voice screen is closed.
     showLocal();
   } else {
     drawMessage("Henter…", "");

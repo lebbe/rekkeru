@@ -1,6 +1,6 @@
 # Rekkeru
 
-Rekkeru is a low-power departure and information display for the Waveshare ESP32-S3-RLCD-4.2. The device normally shows the time, indoor temperature and humidity, and battery level. Pressing its KEY button fetches transit departures, weather, and calendar events.
+Rekkeru is a low-power departure and information display for the Waveshare ESP32-S3-RLCD-4.2. The device normally shows the time, indoor temperature and humidity, and battery level. Pressing its KEY button fetches transit departures, weather, and calendar events. Pressing KEY again opens a voice chat with an animated face; press BOOT to switch personality and KEY to go back.
 
 The project has two parts:
 
@@ -28,6 +28,8 @@ Copy `.env.sample` to `.env`. Set a 64-character hexadecimal `API_KEY`, an ident
 - `WEATHER_QUERY` query-part of met.no API URL, to get your personal location.
 - `ENTUR_STOP` The entur id of the stop for where you want to list departures.
 - `ENTUR_FILTER` OPTOINAL If you only want to list specific lines, you can filter the interesting ones here.
+- `GEMINI_API_KEY` Key for the Gemini API, used by the voice chat. Create one at https://aistudio.google.com/apikey.
+- `GEMINI_MODEL` OPTIONAL Gemini Live model, `gemini-3.8-live` by default.
 
 ### Start the server
 
@@ -37,9 +39,19 @@ npm start
 
 The API listens on port 3000 by default.
 
+## Voice chat
+
+The voice screen streams microphone audio over a WebSocket (`/api/v1/voice`) to the server, which relays it to the [Gemini Live API](https://ai.google.dev/gemini-api/docs/live-api). Gemini listens, answers in Norwegian with Google Search when it needs current facts, and streams speech back. It also calls a `set_mood` tool, which changes the face on the screen. Personalities are defined in `server/services/personas.ts`; each one picks a face that the firmware knows how to draw (`waifu` or `oracle`).
+
+Audio is 16-bit mono PCM at 16 kHz in both directions; the server resamples Gemini's 24 kHz speech. As in Waveshare's XiaoZhi firmware, the ES7210 records the microphone and a hardware loopback of the speaker in TDM mode, and ESP-SR's echo canceller removes the speaker from the microphone signal. The microphone therefore stays open while the persona talks, and you can interrupt it.
+
+To test without the board, open `http://localhost:3000/voice.html` in a browser, enter the API key, and press Start. The page uses AudioWorklet to send and play audio the same way the board does.
+
+If the server runs behind a reverse proxy, the proxy must pass WebSocket upgrades through.
+
 ## Build and upload the firmware
 
-Install the PlatformIO CLI. Copy `firmware/include/secrets.example.h` to `firmware/include/secrets.h` and set the Wi-Fi credentials, matching `API_KEY`, and `SERVER_URL` to the server's address wherever you run the server.
+Install the PlatformIO CLI. Copy `firmware/include/secrets.example.h` to `firmware/include/secrets.h` and set the Wi-Fi credentials, matching `API_KEY`, and `SERVER_URL` to the server's address wherever you run the server. The voice screen uses the same server; set `VOICE_URL` only if it lives somewhere else.
 
 ```sh
 cd firmware

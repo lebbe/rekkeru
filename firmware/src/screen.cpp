@@ -176,6 +176,13 @@ void screenBegin(bool coldBoot) {
   u8g2.enableUTF8Print();
 }
 
+U8G2 &display() { return u8g2; }
+
+void screenAnimate(bool on) {
+  u8g2.setBusClock(on ? 10000000 : 1000000);
+  u8g2.sendF("c", on ? 0x38 : 0x39);  // ST7305 High / Low Power Mode
+}
+
 void screenSleep() {
   gpio_hold_en((gpio_num_t)PIN_LCD_CS);
   gpio_hold_en((gpio_num_t)PIN_LCD_RST);

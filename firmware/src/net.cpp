@@ -73,21 +73,27 @@ bool request(NetData &data, char *error, size_t errorSize) {
 
 }  // namespace
 
-bool fetchScreen(NetData &data, char *error, size_t errorSize) {
+bool wifiConnect() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_TIMEOUT_MS) delay(50);
+  return WiFi.status() == WL_CONNECTED;
+}
 
+void wifiOff() {
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+}
+
+bool fetchScreen(NetData &data, char *error, size_t errorSize) {
   bool ok = false;
-  if (WiFi.status() == WL_CONNECTED) {
+  if (wifiConnect()) {
     ok = request(data, error, errorSize);
   } else {
     snprintf(error, errorSize, "Fikk ikke koblet til Wi-Fi");
   }
-
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
+  wifiOff();
   return ok;
 }
