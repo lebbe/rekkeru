@@ -14,11 +14,12 @@ things to try and measure, not as a guaranteed fix — hence one commit per patc
 (`deepSleep()` in `hardware.cpp`). In the common case (local clock screen) it wakes once a
 minute, reads the SHTC3 climate sensor and the battery ADC, redraws the whole 400×300 display
 over SPI, and goes back to deep sleep. Rough back-of-envelope math on the *active* part of that
-cycle (SHTC3 read ≈ 16 ms, full screen redraw at 1 MHz SPI ≈ tens of ms, Wi-Fi off) puts the
-awake energy per wake at well under 0.01 mAh, i.e. well under 1 mAh/day at 1440 wakes/day. That
-is nowhere near enough to explain a battery that is flat after 2–3 days on an 18650 (2000+ mAh),
-so the *sleep* current, or a failure to actually reach deep sleep, matters far more than the
-per-wake work:
+cycle (SHTC3 read ≈ 16 ms, full 400×300 1-bpp screen redraw at 1 MHz SPI ≈ 120 ms, Wi-Fi off)
+puts the awake energy per wake at roughly 0.01 mAh, i.e. on the order of 14 mAh/day at
+1440 wakes/day. That is still nowhere near enough to explain a battery that is flat after 2–3
+days on an 18650 (2000+ mAh) — at that rate the battery would take months to drain — so the
+*sleep* current, or a failure to actually reach deep sleep, matters far more than the per-wake
+work:
 
 - **Waking up every minute is cheap by itself.** Reducing the redraw interval to every five
   minutes (as suggested in the issue) would cut the number of wakes ~5×, but since each wake
