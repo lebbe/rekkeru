@@ -93,6 +93,19 @@ void drawDrop(int cx, int cy) {
   u8g2.drawBox(cx - 1, cy + 4, 2, 1);
 }
 
+// Small "USB" badge at the bottom center of the screen, shown while a PC is connected over USB
+// (see usbConnected() in hardware.cpp) so it is obvious why the board is not going to sleep.
+void drawUsbIndicator() {
+  const char *label = "USB";
+  u8g2.setFont(u8g2_font_helvB10_tf);
+  const int boxW = u8g2.getUTF8Width(label) + 14, boxH = 16;
+  const int x = (WIDTH - boxW) / 2, y = 300 - boxH - 4;
+  u8g2.drawRBox(x, y, boxW, boxH, 3);
+  u8g2.setDrawColor(0);
+  u8g2.drawUTF8(x + 7, y + boxH - 4, label);
+  u8g2.setDrawColor(1);
+}
+
 // 32x32 icon with its upper-left corner at (x, top). Glyph codes were checked against the font data;
 // see docs/vaerikoner.md. Snow, sleet, fog, and thunder have no 32 px glyph, so they are drawn
 // with the cloud (64) raised and details underneath.
@@ -169,7 +182,7 @@ void screenSleep() {
   gpio_deep_sleep_hold_en();
 }
 
-void drawLocalScreen(const Climate &climate, float batteryVolts) {
+void drawLocalScreen(const Climate &climate, float batteryVolts, bool usbConnected) {
   time_t now = time(nullptr);
   char text[48];
   u8g2.clearBuffer();
@@ -203,10 +216,12 @@ void drawLocalScreen(const Climate &climate, float batteryVolts) {
     u8g2.drawUTF8(224, 266, "--");
   }
 
+  if (usbConnected) drawUsbIndicator();
+
   u8g2.sendBuffer();
 }
 
-void drawNetScreen(const NetData &data, const char *error) {
+void drawNetScreen(const NetData &data, const char *error, bool usbConnected) {
   time_t now = time(nullptr);
   char text[64];
   u8g2.clearBuffer();
@@ -289,6 +304,8 @@ void drawNetScreen(const NetData &data, const char *error) {
   else snprintf(text, sizeof(text), "hentet %s", fetched);
   u8g2.setFont(u8g2_font_helvR10_tf);
   u8g2.drawUTF8(10, 297, text);
+
+  if (usbConnected) drawUsbIndicator();
 
   u8g2.sendBuffer();
 }
