@@ -43,6 +43,11 @@ void hardwareBegin() {
   // After a KEY wake, the pin is still in RTC mode.
   rtc_gpio_deinit((gpio_num_t)PIN_KEY);
   pinMode(PIN_KEY, INPUT_PULLUP);
+
+  // Keep the speaker amplifier off. Drive low before releasing the deep-sleep hold so it never glitches high.
+  pinMode(PIN_PA_CTRL, OUTPUT);
+  digitalWrite(PIN_PA_CTRL, LOW);
+  gpio_hold_dis((gpio_num_t)PIN_PA_CTRL);
 }
 
 Climate readClimate() {
@@ -159,5 +164,7 @@ void deepSleep(uint32_t seconds) {
   esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_KEY, 0);
   rtc_gpio_pullup_en((gpio_num_t)PIN_KEY);
   rtc_gpio_pulldown_dis((gpio_num_t)PIN_KEY);
+  gpio_hold_en((gpio_num_t)PIN_PA_CTRL);
+  gpio_deep_sleep_hold_en();
   esp_deep_sleep_start();
 }
