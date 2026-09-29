@@ -52,3 +52,6 @@ constexpr uint8_t SPEAKER_VOLUME = 0xBF;  // ES8311 DAC volume: 0xBF = 0 dB, 0.5
 constexpr uint8_t MIC_GAIN = 10;          // ES7210 PGA: 3 dB per step, so 10 = 30 dB (as XiaoZhi).
 // Return to the local screen after this long without any conversation.
 constexpr uint32_t VOICE_IDLE_SECONDS = 3 * 60;
+// Print voice diagnostics over USB once a second: level per TDM slot and after echo cancellation,
+// bytes sent and received, and main loop timing. Read them with `python -m platformio device monitor`.
+constexpr bool VOICE_LOG = false;

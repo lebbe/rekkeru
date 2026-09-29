@@ -2,7 +2,6 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-#include <driver/i2s_std.h>
 #include <driver/i2s_tdm.h>
 #include <esp_afe_config.h>
 #include <esp_afe_sr_iface.h>
@@ -15,7 +14,7 @@
 // Modelled on Waveshare's XiaoZhi firmware for this board (main/audio/codecs/box_audio_codec.cc and
 // main/audio/processors/afe_audio_processor.cc):
 //
-//   ES8311 (speaker) <- I2S standard stereo
+//   ES8311 (speaker) <- I2S TDM, 4 slots, the same sample in all of them
 //   ES7210 (mics)    -> I2S TDM, 4 slots. Slot 0 is the microphone; slot 1 is a hardware loopback of
 //                       the speaker signal, sample-aligned with the microphone.
 //   ESP-SR AFE       <- "MR" (mic, reference), removes the speaker from the microphone signal.
@@ -27,8 +26,10 @@ namespace {
 constexpr size_t FRAME = AUDIO_SAMPLE_RATE / 50;  // 20 ms, in samples
 constexpr size_t PLAY_BUFFER = 2 * 1024 * 1024;   // ~65 s. Gemini sends audio faster than real time.
 constexpr size_t MIC_BUFFER = 64 * 1024;
-// Buffer this much before starting playback, to ride out network jitter.
+// Buffer this much before starting playback, to ride out network jitter. If playback runs dry in
+// the middle of an answer, wait for more before resuming: one short pause instead of stuttering.
 constexpr size_t PREBUFFER_BYTES = AUDIO_SAMPLE_RATE * 2 * 150 / 1000;
+constexpr size_t REBUFFER_BYTES = AUDIO_SAMPLE_RATE * 2 * 600 / 1000;
 constexpr int TDM_SLOTS = 4;
 
 i2s_chan_handle_t txChannel;
@@ -213,36 +214,27 @@ bool i2sBegin() {
   channel.auto_clear = true;  // Play silence when we fall behind.
   if (i2s_new_channel(&channel, &txChannel, &rxChannel) != ESP_OK) return false;
 
-  i2s_std_config_t std = {};
-  std.clk_cfg.sample_rate_hz = AUDIO_SAMPLE_RATE;
-  std.clk_cfg.clk_src = I2S_CLK_SRC_DEFAULT;
-  std.clk_cfg.mclk_multiple = I2S_MCLK_MULTIPLE_256;
-  std.slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
-  std.gpio_cfg.mclk = (gpio_num_t)PIN_I2S_MCLK;
-  std.gpio_cfg.bclk = (gpio_num_t)PIN_I2S_BCLK;
-  std.gpio_cfg.ws = (gpio_num_t)PIN_I2S_WS;
-  std.gpio_cfg.dout = (gpio_num_t)PIN_I2S_DOUT;
-  std.gpio_cfg.din = I2S_GPIO_UNUSED;
-
+  // TX and RX share BCLK and WS in full duplex, so both get the same 4-slot TDM frame, as in
+  // Waveshare's Arduino audio example (codec_board/codec_init.c). With a standard stereo TX frame the
+  // RX side never saw a complete TDM frame and every read timed out.
   i2s_tdm_config_t tdm = {};
-  tdm.clk_cfg.sample_rate_hz = AUDIO_SAMPLE_RATE;
-  tdm.clk_cfg.clk_src = I2S_CLK_SRC_DEFAULT;
-  tdm.clk_cfg.mclk_multiple = I2S_MCLK_MULTIPLE_256;
-  tdm.clk_cfg.bclk_div = 8;
+  tdm.clk_cfg = I2S_TDM_CLK_DEFAULT_CONFIG(AUDIO_SAMPLE_RATE);
   tdm.slot_cfg = I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(
       I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO,
       (i2s_tdm_slot_mask_t)(I2S_TDM_SLOT0 | I2S_TDM_SLOT1 | I2S_TDM_SLOT2 | I2S_TDM_SLOT3));
-  tdm.slot_cfg.ws_width = I2S_TDM_AUTO_WS_WIDTH;
-  tdm.slot_cfg.total_slot = I2S_TDM_AUTO_SLOT_NUM;
+  tdm.slot_cfg.total_slot = TDM_SLOTS;
   tdm.gpio_cfg.mclk = (gpio_num_t)PIN_I2S_MCLK;
   tdm.gpio_cfg.bclk = (gpio_num_t)PIN_I2S_BCLK;
   tdm.gpio_cfg.ws = (gpio_num_t)PIN_I2S_WS;
+  tdm.gpio_cfg.dout = (gpio_num_t)PIN_I2S_DOUT;
+  tdm.gpio_cfg.din = I2S_GPIO_UNUSED;
+  if (i2s_channel_init_tdm_mode(txChannel, &tdm) != ESP_OK) return false;
+
   tdm.gpio_cfg.dout = I2S_GPIO_UNUSED;
   tdm.gpio_cfg.din = (gpio_num_t)PIN_I2S_DIN;
+  if (i2s_channel_init_tdm_mode(rxChannel, &tdm) != ESP_OK) return false;
 
-  return i2s_channel_init_std_mode(txChannel, &std) == ESP_OK &&
-         i2s_channel_init_tdm_mode(rxChannel, &tdm) == ESP_OK && i2s_channel_enable(txChannel) == ESP_OK &&
-         i2s_channel_enable(rxChannel) == ESP_OK;
+  return i2s_channel_enable(txChannel) == ESP_OK && i2s_channel_enable(rxChannel) == ESP_OK;
 }
 
 void i2sEnd() {
@@ -273,9 +265,10 @@ bool afeBegin() {
 
 void playLoop(void *) {
   static int16_t mono[FRAME];
-  static int16_t stereo[FRAME * 2];
+  static int16_t tdm[FRAME * TDM_SLOTS];
   bool started = false;
-  uint32_t waitingSince = 0;
+  uint32_t waitingSince = 0, drySince = 0;
+  size_t needed = PREBUFFER_BYTES;
 
   while (running) {
     if (flushRequested) {
@@ -283,51 +276,80 @@ void playLoop(void *) {
       }
       flushRequested = false;
       started = false;
+      waitingSince = 0;
+      needed = PREBUFFER_BYTES;
     }
 
     size_t available = xStreamBufferBytesAvailable(playBuffer);
+    // Silent for a while: the next audio is a new answer, so start it quickly again.
+    if (!started && available == 0 && drySince && millis() - drySince > 2000) needed = PREBUFFER_BYTES;
     if (!started && available > 0) {
       if (!waitingSince) waitingSince = millis();
-      started = available >= PREBUFFER_BYTES || millis() - waitingSince > 300;
+      started = available >= needed || millis() - waitingSince > 1000;
     }
 
     size_t samples = 0;
     if (started) {
       samples = xStreamBufferReceive(playBuffer, mono, sizeof(mono), 0) / 2;
       if (samples == 0) {
+        if (VOICE_LOG) Serial.println("[audio] playback ran dry");
         started = false;
         waitingSince = 0;
+        drySince = millis();
+        needed = REBUFFER_BYTES;
       }
     }
 
     float sum = 0;
     for (size_t i = 0; i < FRAME; i++) {
       int16_t value = i < samples ? mono[i] : 0;
-      stereo[2 * i] = stereo[2 * i + 1] = value;
+      // The same sample in every slot, so the ES8311 hears it whichever slots it reads as left/right.
+      for (int s = 0; s < TDM_SLOTS; s++) tdm[TDM_SLOTS * i + s] = value;
       sum += (float)value * value;
     }
     playing = started;
     level = min(1.0f, sqrtf(sum / FRAME) / 6000.0f);
 
     size_t written;  // Blocks until there is room, which paces the loop.
-    i2s_channel_write(txChannel, stereo, sizeof(stereo), &written, 100);
+    i2s_channel_write(txChannel, tdm, sizeof(tdm), &written, 100);
   }
   playTask = nullptr;
   vTaskDelete(nullptr);
 }
+
+// Diagnostics: RMS level per TDM slot and after echo cancellation, printed about once a second.
+float slotSquares[TDM_SLOTS], afeSquares;
+uint32_t slotSamples, afeSamples;
 
 // Reads TDM frames and feeds (mic, reference) pairs to the AFE, as AudioService::ReadAudioData.
 void recordLoop(void *) {
   const int chunk = afe->get_feed_chunksize(afeData);  // Samples per channel
   int16_t *tdm = (int16_t *)heap_caps_malloc(chunk * TDM_SLOTS * sizeof(int16_t), MALLOC_CAP_SPIRAM);
   int16_t *feed = (int16_t *)heap_caps_malloc(chunk * 2 * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+  if (VOICE_LOG) Serial.printf("[audio] AFE feed chunk %d samples, %d channels\n", chunk, afe->get_feed_channel_num(afeData));
 
   while (running && tdm && feed) {
     size_t bytes = 0;
-    if (i2s_channel_read(rxChannel, tdm, chunk * TDM_SLOTS * sizeof(int16_t), &bytes, 100) != ESP_OK) continue;
+    esp_err_t err = i2s_channel_read(rxChannel, tdm, chunk * TDM_SLOTS * sizeof(int16_t), &bytes, 100);
+    if (err != ESP_OK) {
+      Serial.printf("[audio] i2s read failed: %s (%u bytes)\n", esp_err_to_name(err), bytes);
+      continue;
+    }
     for (int i = 0; i < chunk; i++) {
       feed[2 * i] = tdm[TDM_SLOTS * i];          // Slot 0: microphone
       feed[2 * i + 1] = tdm[TDM_SLOTS * i + 1];  // Slot 1: speaker reference
+      for (int s = 0; s < TDM_SLOTS; s++) slotSquares[s] += (float)tdm[TDM_SLOTS * i + s] * tdm[TDM_SLOTS * i + s];
+    }
+    slotSamples += chunk;
+    if (slotSamples >= AUDIO_SAMPLE_RATE) {
+      if (VOICE_LOG) Serial.printf("[audio] slot RMS: %6.0f %6.0f %6.0f %6.0f | after AEC: %6.0f | first frame: %6d %6d %6d %6d\n",
+                    sqrtf(slotSquares[0] / slotSamples), sqrtf(slotSquares[1] / slotSamples),
+                    sqrtf(slotSquares[2] / slotSamples), sqrtf(slotSquares[3] / slotSamples),
+                    afeSamples ? sqrtf(afeSquares / afeSamples) : -1.0f, tdm[0], tdm[1], tdm[2], tdm[3]);
+      for (float &s : slotSquares) s = 0;
+      slotSamples = 0;
+      afeSquares = 0;
+      afeSamples = 0;
     }
     afe->feed(afeData, feed);
   }
@@ -341,6 +363,9 @@ void afeLoop(void *) {
   while (running) {
     afe_fetch_result_t *result = afe->fetch_with_delay(afeData, pdMS_TO_TICKS(100));
     if (!result || result->ret_value == ESP_FAIL || !result->data) continue;
+    int samples = result->data_size / 2;
+    for (int i = 0; i < samples; i++) afeSquares += (float)result->data[i] * result->data[i];
+    afeSamples += samples;
     xStreamBufferSend(micBuffer, result->data, result->data_size, 0);
   }
   afeTask = nullptr;
@@ -366,8 +391,8 @@ bool audioBegin() {
   flushRequested = false;
   playing = false;
   xTaskCreatePinnedToCore(playLoop, "play", 4096, nullptr, 6, &playTask, 1);
-  xTaskCreatePinnedToCore(recordLoop, "record", 4096, nullptr, 6, &recordTask, 1);
-  xTaskCreatePinnedToCore(afeLoop, "afe", 4096, nullptr, 3, &afeTask, 0);
+  xTaskCreatePinnedToCore(recordLoop, "record", 16384, nullptr, 6, &recordTask, 1);
+  xTaskCreatePinnedToCore(afeLoop, "afe", 8192, nullptr, 3, &afeTask, 0);
   return speakerOk && micOk;
 }
 

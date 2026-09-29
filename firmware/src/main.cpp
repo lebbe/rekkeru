@@ -96,6 +96,7 @@ void wake(esp_sleep_wakeup_cause_t cause) {
 }
 
 void setup() {
+  Serial.begin(115200);  // USB log; only readable while connected to a PC.
   hardwareBegin();
   setenv("TZ", TIMEZONE, 1);
   tzset();

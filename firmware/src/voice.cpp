@@ -21,6 +21,7 @@ Face face;
 bool connected;
 VoiceState serverState;
 uint32_t lastActivity;
+uint32_t receivedBytes;  // Diagnostics, per second
 
 struct Url {
   bool secure;
@@ -93,18 +94,22 @@ void onText(const uint8_t *payload, size_t length) {
 void onEvent(WStype_t type, uint8_t *payload, size_t length) {
   switch (type) {
     case WStype_CONNECTED:
+      if (VOICE_LOG) Serial.println("[voice] WebSocket connected");
       connected = true;
       face.status[0] = '\0';
       serverState = VoiceState::Connecting;
       break;
     case WStype_DISCONNECTED:
+      if (VOICE_LOG) Serial.println("[voice] WebSocket disconnected");
       connected = false;
       audioFlush();
       break;
     case WStype_TEXT:
+      if (VOICE_LOG) Serial.printf("[voice] <- %.*s\n", (int)length, (const char *)payload);
       onText(payload, length);
       break;
     case WStype_BIN:
+      receivedBytes += length;
       audioPlay(payload, length);
       lastActivity = millis();
       break;
@@ -158,17 +163,34 @@ void runVoice() {
     pinMode(PIN_BOOT, INPUT_PULLUP);
     bool keyDown = true, bootDown = digitalRead(PIN_BOOT) == LOW;
     lastActivity = millis();
-    uint32_t lastFrame = 0;
-    static uint8_t mic[AUDIO_SAMPLE_RATE / 50 * 2];  // 20 ms
+    uint32_t lastFrame = 0, lastLog = 0, sentBytes = 0, failedSends = 0, loops = 0, slowest = 0;
+    // 100 ms per message: fewer, larger TLS writes leave more time for receiving speech.
+    static uint8_t mic[AUDIO_SAMPLE_RATE / 10 * 2];
+    size_t micFill = 0;
 
     while (true) {
-      ws.loop();
+      uint32_t start = millis();
+      // Read everything the server has sent, not just one message per round.
+      for (int i = 0; i < 8; i++) ws.loop();
 
-      size_t bytes;
-      while ((bytes = audioRecord(mic, sizeof(mic))) > 0)
-        if (connected) ws.sendBIN(mic, bytes);
+      micFill += audioRecord(mic + micFill, sizeof(mic) - micFill);
+      if (micFill == sizeof(mic)) {
+        if (!connected) {
+        } else if (ws.sendBIN(mic, micFill)) {
+          sentBytes += micFill;
+        } else {
+          failedSends++;
+        }
+        micFill = 0;
+      }
 
       uint32_t now = millis();
+      if (now - lastLog >= 1000) {
+        if (VOICE_LOG) Serial.printf("[voice] connected=%d state=%d sent=%u B/s failed=%u received=%u B/s loops=%u slowest=%u ms\n",
+                      connected, (int)currentState(), sentBytes, failedSends, receivedBytes, loops, slowest);
+        sentBytes = failedSends = receivedBytes = loops = slowest = 0;
+        lastLog = now;
+      }
       if (pressed(PIN_KEY, keyDown)) break;
       if (pressed(PIN_BOOT, bootDown) && connected) {
         audioFlush();
@@ -183,6 +205,8 @@ void runVoice() {
         animateFace(face, now, audioLevel());
         drawFace(face);
       }
+      loops++;
+      slowest = max(slowest, millis() - start);
       delay(1);
     }
 
