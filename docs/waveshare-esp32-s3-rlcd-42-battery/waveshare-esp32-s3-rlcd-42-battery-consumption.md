@@ -34,13 +34,12 @@ per-wake work:
   run its CPU/peripherals continuously, which could easily flatten a battery in a day or two.
   This was hardened defensively (see patch below), since it's cheap insurance against the
   single largest possible drain and can't be ruled out without instrumenting a real board.
-- **GPIO hold across deep sleep.** `screenSleep()` calls `gpio_hold_en()` on the display CS/RST
-  pins so the ST7305's low-power mode image survives while the ESP32 sleeps, and
-  `gpio_deep_sleep_hold_en()`. Per Espressif's docs, holding RTC GPIOs during deep sleep keeps
-  the RTC peripherals power domain on, which raises the sleep current somewhat above the
-  lowest-power configuration. This is a deliberate trade-off (it avoids a full display
-  re-initialization flash on every wake) and isn't changed here, but it's worth knowing about if
-  sleep current is ever measured directly on hardware.
+- **GPIO hold across deep sleep.** `screenSleep()` holds the display CS/RST pins (GPIO40/41)
+  so the ST7305's low-power-mode image survives while the ESP32 sleeps, and enables global
+  deep-sleep pad hold with `gpio_deep_sleep_hold_en()`. These are digital GPIOs, not ESP32-S3 RTC
+  GPIOs, so the RTC-peripheral-domain caveat for RTC GPIO hold does not directly apply. Retaining
+  the pads is deliberate to avoid a full display re-initialization flash; measure its sleep-current
+  impact on hardware before treating it as a contributor.
 - **Sensors read every wake regardless of which screen is shown.** `wake()` unconditionally
   read the SHTC3 and the battery ADC even on wakes that only refresh the network/departures
   screen, which never displays either value. This wastes a small but avoidable amount of I²C
