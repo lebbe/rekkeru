@@ -14,6 +14,7 @@ constexpr int PIN_I2C_SCL = 14;
 
 constexpr int PIN_KEY = 18;     // Active low, RTC GPIO, wakes from deep sleep.
 constexpr int PIN_BATTERY = 4;  // ADC, 3x spenningsdeler.
+constexpr int PIN_PA_CTRL = 46;  // NS4150B speaker amplifier enable. Held low so it cannot float on.
 
 // A single-cell Li-ion/LiPo is not usable down to 2.5 V; the board browns out long before that,
 // so treat a more realistic no-load cutoff as empty (see docs/waveshare-esp32-s3-rlcd-42-battery).

@@ -35,7 +35,7 @@ The board contains:
 
 The ES8311 and ES7210 datasheets indicate that their analogue circuits, ADCs, microphone bias, and DAC are powered down by their reset defaults. The current firmware never initializes them, so they are not expected to be actively recording or playing audio.
 
-The speaker amplifier is different. Its enable/control input is connected to **GPIO46** (`PA_CTRL`). The firmware does not currently configure or hold GPIO46 low before deep sleep. If that pin floats high, the amplifier could remain enabled and become a meaningful continuous drain. The safest firmware behavior is to drive GPIO46 low and hold it low during deep sleep, then verify the change with a current measurement.
+The speaker amplifier is different. Its enable/control input is connected to **GPIO46** (`PA_CTRL`). If that pin floated high, the amplifier could remain enabled and become a meaningful continuous drain. The firmware therefore drives GPIO46 low at startup and holds it low through deep sleep (`hardwareBegin()` / `deepSleep()` in `hardware.cpp`). Verify the effect with a current measurement.
 
 This is a risk to test, not a confirmed drain: the available documentation did not establish whether the amplifier has an internal pull-down.
 
