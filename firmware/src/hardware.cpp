@@ -135,12 +135,23 @@ bool waitForKey(uint32_t seconds) {
 }
 
 bool usbConnected() {
-  // The PC sends SOF packets every millisecond, but needs a little time after startup.
-  while (millis() < 500) {
-    if (usb_serial_jtag_is_connected()) return true;
+  // The PC sends SOF packets every millisecond, but needs a little time after startup. Require
+  // several consecutive positive reads, not just one, before trusting the signal: the D+/D- lines
+  // float when nothing is attached, and a single noise-induced false positive here would keep the
+  // board from ever reaching deep sleep, draining the battery in a day or two instead of weeks.
+  constexpr uint32_t WARMUP_MS = 500;
+  constexpr uint8_t REQUIRED_CONSECUTIVE = 5;
+  uint8_t consecutive = 0;
+  uint32_t start = millis();
+  while (millis() - start < WARMUP_MS) {
+    if (usb_serial_jtag_is_connected()) {
+      if (++consecutive >= REQUIRED_CONSECUTIVE) return true;
+    } else {
+      consecutive = 0;
+    }
     delay(10);
   }
-  return usb_serial_jtag_is_connected();
+  return false;
 }
 
 void deepSleep(uint32_t seconds) {
