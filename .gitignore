@@ -1,2 +1,3 @@
 docs/*
-!docs/waveshare-esp32-s3-rlcd-42-battery/
+!docs/waveshare-esp32-s3-rlcd-42/
+.vscode
