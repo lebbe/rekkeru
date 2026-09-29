@@ -28,6 +28,7 @@ RTC_DATA_ATTR char netError[48];
 
 Climate climate;
 float batteryVolts;
+bool usbActive = false;
 
 void showLocal() {
   mode = Mode::Local;
@@ -35,13 +36,13 @@ void showLocal() {
   // screen never displays them, so reading them on those wakes would just waste I2C/ADC time.
   climate = readClimate();
   batteryVolts = readBatteryVolts();
-  drawLocalScreen(climate, batteryVolts);
+  drawLocalScreen(climate, batteryVolts, usbActive);
 }
 
 void showNet() {
   if (!netData.valid) drawServerDown(netError);
   else if (netData.departuresError[0] && netData.weatherError[0] && netData.calendarError[0]) drawTeapot();
-  else drawNetScreen(netData, netError);  // Each unavailable service gets its own warning line.
+  else drawNetScreen(netData, netError, usbActive);  // Each unavailable service gets its own warning line.
 }
 
 void fetchAndShowNet() {
@@ -101,7 +102,8 @@ void setup() {
 
 void loop() {
   uint32_t seconds = secondsToSleep();
-  if (!usbConnected()) {
+  usbActive = usbConnected();
+  if (!usbActive) {
     screenSleep();
     deepSleep(seconds);  // Never returns. The next wake-up starts in setup().
   }
