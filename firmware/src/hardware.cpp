@@ -71,7 +71,13 @@ float readBatteryVolts() {
 
 int batteryPercent(float volts) {
   float percent = (volts - BATTERY_EMPTY_VOLTS) / (BATTERY_FULL_VOLTS - BATTERY_EMPTY_VOLTS) * 100.0f;
-  return constrain((int)lroundf(percent), 0, 100);
+  int rounded = constrain((int)lroundf(percent), 0, 100);
+  // The divider and ADC's tolerances mean a resting battery rarely reads exactly at either
+  // calibration voltage, so a strict linear mapping would almost never show 0 % or 100 % even
+  // when the battery is, for all practical purposes, empty or full.
+  if (rounded >= 97) return 100;
+  if (rounded <= 3) return 0;
+  return rounded;
 }
 
 bool loadTimeFromRtc() {

@@ -15,7 +15,9 @@ constexpr int PIN_I2C_SCL = 14;
 constexpr int PIN_KEY = 18;     // Active low, RTC GPIO, wakes from deep sleep.
 constexpr int PIN_BATTERY = 4;  // ADC, 3x spenningsdeler.
 
-constexpr float BATTERY_EMPTY_VOLTS = 2.5f;
+// A single-cell Li-ion/LiPo is not usable down to 2.5 V; the board browns out long before that,
+// so treat a more realistic no-load cutoff as empty (see docs/waveshare-esp32-s3-rlcd-42-battery).
+constexpr float BATTERY_EMPTY_VOLTS = 3.3f;
 constexpr float BATTERY_FULL_VOLTS = 4.2f;
 
 constexpr const char *TIMEZONE = "CET-1CEST,M3.5.0,M10.5.0/3";
