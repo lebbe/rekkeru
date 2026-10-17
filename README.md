@@ -2,6 +2,10 @@
 
 Rekkeru is a low-power departure and information display for the Waveshare ESP32-S3-RLCD-4.2. The device shows one screen all the time: clock, date and battery on top, the next departures on the left, upcoming calendar events on the right, and indoor temperature and humidity below. Departures, weather, and calendar are fetched once a day at 07:00 and whenever BOOT is pressed; between fetches the countdowns are calculated on the board, so Wi-Fi stays off. Pressing KEY opens a voice chat with an animated face; press BOOT to switch personality and KEY to go back.
 
+![The Rekkeru main screen](screen.svg)
+
+The screen as drawn by the firmware (400x300, one bit per pixel on the real display). Departures are on the left, the calendar on the right, and weather and indoor climate along the bottom. The USB badge only shows while a PC is connected.
+
 The project has two parts:
 
 - `firmware/`: Arduino firmware built with PlatformIO. It drives the display and sensors, sleeps between updates, and requests data over Wi-Fi.

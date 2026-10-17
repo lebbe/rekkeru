@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 400 300" role="img" aria-label="Rekkeru main screen: clock, date and battery on top; departures, calendar, weather and indoor climate below">
+  <rect width="400" height="300" fill="#fff"/>
+  <g font-family="Helvetica, Arial, sans-serif" fill="#000">
+    <!-- Top row -->
+    <text x="10" y="30" font-size="24" font-weight="700">17:42</text>
+    <text x="190" y="28" font-size="15" font-weight="700" text-anchor="middle">fredag 17. oktober</text>
+    <text x="338" y="26" font-size="14" font-weight="700" text-anchor="end">78 %</text>
+    <rect x="344" y="13" width="34" height="16" fill="none" stroke="#000"/>
+    <rect x="378" y="17" width="3" height="8"/>
+    <rect x="346" y="15" width="26" height="12"/>
+    <rect x="0" y="40" width="400" height="1"/>
+
+    <!-- Departures -->
+    <g font-size="17" font-weight="700">
+      <rect x="8" y="47" width="34" height="24" rx="4"/><text x="25" y="66" fill="#fff" text-anchor="middle">3</text><text x="125" y="66" text-anchor="end">nå</text>
+      <rect x="8" y="77" width="34" height="24" rx="4"/><text x="25" y="96" fill="#fff" text-anchor="middle">5</text><text x="125" y="96" text-anchor="end">3 min</text>
+      <rect x="8" y="107" width="34" height="24" rx="4"/><text x="25" y="126" fill="#fff" text-anchor="middle">3</text><text x="125" y="126" text-anchor="end">9 min</text>
+      <rect x="8" y="137" width="34" height="24" rx="4"/><text x="25" y="156" fill="#fff" text-anchor="middle">5</text><text x="125" y="156" text-anchor="end">13 min</text>
+      <rect x="8" y="167" width="34" height="24" rx="4"/><text x="25" y="186" fill="#fff" text-anchor="middle">3</text><text x="125" y="186" text-anchor="end">19 min</text>
+      <rect x="8" y="197" width="34" height="24" rx="4"/><text x="25" y="216" fill="#fff" text-anchor="middle">5</text><text x="125" y="216" text-anchor="end">23 min</text>
+    </g>
+
+    <!-- Calendar -->
+    <g font-size="14">
+      <text x="144" y="66"><tspan font-weight="700">18:30</tspan>  Foreldremøte</text>
+      <text x="144" y="96"><tspan font-weight="700">lør 09:00</tspan>  Fotballtrening</text>
+      <text x="144" y="126"><tspan font-weight="700">søn</tspan>  Bursdag Ola</text>
+      <text x="144" y="156"><tspan font-weight="700">man 12:15</tspan>  Tannlege</text>
+      <text x="144" y="186"><tspan font-weight="700">tir 17:00</tspan>  Middag hos mormor</text>
+      <text x="144" y="216"><tspan font-weight="700">ons 19:00</tspan>  Styremøte borettslag</text>
+    </g>
+    <rect x="0" y="225" width="400" height="1"/>
+
+    <!-- Weather -->
+    <g transform="translate(10,229)">
+      <circle cx="9" cy="10" r="6" fill="none" stroke="#000" stroke-width="2"/>
+      <path d="M8 29h18a5.5 5.5 0 000-11 7.5 7.5 0 00-14 1.5 5 5 0 00-4 9.5z" fill="#fff" stroke="#000" stroke-width="2"/>
+    </g>
+    <text x="54" y="255" font-size="24" font-weight="700">9°</text>
+    <text x="10" y="276" font-size="12">Regn fra kl. 14</text>
+
+    <!-- Indoor climate -->
+    <text x="148" y="241" font-size="12">Inne</text>
+    <text x="280" y="241" font-size="12">Luftfuktighet</text>
+    <text x="148" y="270" font-size="33">21,4 °C</text>
+    <text x="280" y="270" font-size="33">38 %</text>
+
+    <!-- One solid divider -->
+    <rect x="133" y="41" width="1" height="238"/>
+
+    <!-- Bottom row -->
+    <rect x="172" y="280" width="56" height="16" rx="3"/>
+    <text x="200" y="292" font-size="10" font-weight="700" fill="#fff" text-anchor="middle">USB</text>
+    <text x="390" y="296" font-size="10" text-anchor="end">hentet 07:00</text>
+  </g>
+  <rect x="0.5" y="0.5" width="399" height="299" fill="none" stroke="#000"/>
+</svg>
