@@ -4,7 +4,7 @@ const regexFilter = new RegExp(FILTER, 'g')
 
 const QUERY = `query ($id: String!, $start: DateTime!) {
   stopPlace(id: $id) {
-    estimatedCalls(startTime: $start, numberOfDepartures: 20, whiteListedModes: [metro]) {
+    estimatedCalls(startTime: $start, timeRange: 64800, numberOfDepartures: 400, whiteListedModes: [metro]) {
       expectedDepartureTime
       destinationDisplay { frontText }
       serviceJourney { line { publicCode } }
@@ -51,6 +51,7 @@ async function fetchDepartures(
       time: Math.floor(Date.parse(call.expectedDepartureTime) / 1000),
     }))
     .filter((departure) => departure.dest.match(regexFilter))
+    .slice(0, 128)
 }
 
 export default async function getDepartures(

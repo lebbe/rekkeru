@@ -21,6 +21,7 @@ bool request(NetData &data, char *error, size_t errorSize) {
   http.addHeader("Authorization", "Bearer " API_KEY);
 
   int status = http.GET();
+  Serial.printf("[net] GET -> %d\n", status);
   if (status != 200) {
     if (status == 418) snprintf(error, errorSize, "Feil API-nøkkel");
     else if (status < 0) snprintf(error, errorSize, "Fant ikke serveren");
@@ -32,6 +33,7 @@ bool request(NetData &data, char *error, size_t errorSize) {
   JsonDocument doc;
   DeserializationError jsonError = deserializeJson(doc, http.getString());
   http.end();
+  if (jsonError) Serial.printf("[net] JSON error: %s\n", jsonError.c_str());
   if (jsonError || !(doc["now"] | 0)) {
     snprintf(error, errorSize, "Ugyldig svar");
     return false;
@@ -50,21 +52,25 @@ bool request(NetData &data, char *error, size_t errorSize) {
     if (d.departureCount == MAX_DEPARTURES) break;
     Departure &out = d.departures[d.departureCount++];
     strlcpy(out.line, dep["line"] | "", sizeof(out.line));
-    strlcpy(out.dest, dep["dest"] | "", sizeof(out.dest));
     out.time = dep["time"] | 0;
   }
 
-  JsonObject weather = doc["weather"];
-  if (!weather.isNull() && !d.weatherError[0]) {
-    d.hasWeather = true;
-    d.temp = lroundf(weather["temp"] | 0.0f);
-    strlcpy(d.icon, weather["icon"] | "", sizeof(d.icon));
-    strlcpy(d.weatherText, weather["text"] | "", sizeof(d.weatherText));
+  for (JsonObject hour : doc["weather"]["forecast"].as<JsonArray>()) {
+    if (d.forecastCount == MAX_FORECAST) break;
+    WeatherHour &out = d.forecast[d.forecastCount++];
+    out.time = hour["time"] | 0;
+    out.temp = lroundf(hour["temp"] | 0.0f);
+    strlcpy(out.icon, hour["icon"] | "", sizeof(out.icon));
+    strlcpy(out.text, hour["text"] | "", sizeof(out.text));
   }
 
-  for (const char *line : doc["calendar"].as<JsonArray>()) {
+  for (JsonObject event : doc["calendar"].as<JsonArray>()) {
     if (d.calendarCount == MAX_CALENDAR) break;
-    strlcpy(d.calendar[d.calendarCount++], line ? line : "", sizeof(d.calendar[0]));
+    CalendarEvent &out = d.calendar[d.calendarCount++];
+    out.start = event["start"] | 0;
+    out.end = event["end"] | 0;
+    out.allDay = event["allDay"] | false;
+    strlcpy(out.title, event["title"] | "", sizeof(out.title));
   }
 
   data = d;
@@ -79,6 +85,7 @@ bool wifiConnect() {
 
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_TIMEOUT_MS) delay(50);
+  Serial.printf("[wifi] status=%d after %u ms\n", (int)WiFi.status(), millis() - start);
   return WiFi.status() == WL_CONNECTED;
 }
 

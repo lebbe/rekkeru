@@ -40,9 +40,11 @@ int64_t daysFromCivil(int y, int m, int d) {
 void hardwareBegin() {
   Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
 
-  // After a KEY wake, the pin is still in RTC mode.
+  // After a button wake, the pins are still in RTC mode.
   rtc_gpio_deinit((gpio_num_t)PIN_KEY);
+  rtc_gpio_deinit((gpio_num_t)PIN_BOOT);
   pinMode(PIN_KEY, INPUT_PULLUP);
+  pinMode(PIN_BOOT, INPUT_PULLUP);
 
   // Keep the speaker amplifier off. Drive low before releasing the deep-sleep hold so it never glitches high.
   pinMode(PIN_PA_CTRL, OUTPUT);
@@ -126,17 +128,26 @@ bool timeIsValid() { return time(nullptr) > 1700000000; }
 
 void waitForKeyRelease() {
   uint32_t start = millis();
-  while (digitalRead(PIN_KEY) == LOW && millis() - start < 5000) delay(10);
+  while ((digitalRead(PIN_KEY) == LOW || digitalRead(PIN_BOOT) == LOW) && millis() - start < 5000) delay(10);
   delay(30);  // Debounce, or releasing the button would wake the board again.
 }
 
-bool waitForKey(uint32_t seconds) {
+Press waitForPress(uint32_t seconds) {
   uint32_t start = millis();
   while (millis() - start < seconds * 1000) {
-    if (digitalRead(PIN_KEY) == LOW) return true;
+    if (digitalRead(PIN_KEY) == LOW) return Press::Key;
+    if (digitalRead(PIN_BOOT) == LOW) return Press::Boot;
     delay(20);
   }
-  return false;
+  return Press::None;
+}
+
+Press wakePress() {
+  if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_EXT1) return Press::None;
+  uint64_t pins = esp_sleep_get_ext1_wakeup_status();
+  if (pins & (1ULL << PIN_KEY)) return Press::Key;
+  if (pins & (1ULL << PIN_BOOT)) return Press::Boot;
+  return Press::None;
 }
 
 bool usbConnected() {
@@ -161,9 +172,13 @@ bool usbConnected() {
 
 void deepSleep(uint32_t seconds) {
   esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
-  esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_KEY, 0);
-  rtc_gpio_pullup_en((gpio_num_t)PIN_KEY);
-  rtc_gpio_pulldown_dis((gpio_num_t)PIN_KEY);
+  // KEY and BOOT are both active low RTC GPIOs, so a single EXT1 source wakes the board on either.
+  esp_sleep_enable_ext1_wakeup_io((1ULL << PIN_KEY) | (1ULL << PIN_BOOT), ESP_EXT1_WAKEUP_ANY_LOW);
+  for (int pin : {PIN_KEY, PIN_BOOT}) {
+    rtc_gpio_init((gpio_num_t)pin);
+    rtc_gpio_pullup_en((gpio_num_t)pin);
+    rtc_gpio_pulldown_dis((gpio_num_t)pin);
+  }
   gpio_hold_en((gpio_num_t)PIN_PA_CTRL);
   gpio_deep_sleep_hold_en();
   esp_deep_sleep_start();

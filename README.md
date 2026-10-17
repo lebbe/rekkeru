@@ -1,6 +1,6 @@
 # Rekkeru
 
-Rekkeru is a low-power departure and information display for the Waveshare ESP32-S3-RLCD-4.2. The device normally shows the time, indoor temperature and humidity, and battery level. Pressing its KEY button fetches transit departures, weather, and calendar events. Pressing KEY again opens a voice chat with an animated face; press BOOT to switch personality and KEY to go back.
+Rekkeru is a low-power departure and information display for the Waveshare ESP32-S3-RLCD-4.2. The device shows one screen all the time: clock, date and battery on top, the next departures on the left, upcoming calendar events on the right, and indoor temperature and humidity below. Departures, weather, and calendar are fetched once a day at 07:00 and whenever BOOT is pressed; between fetches the countdowns are calculated on the board, so Wi-Fi stays off. Pressing KEY opens a voice chat with an animated face; press BOOT to switch personality and KEY to go back.
 
 The project has two parts:
 

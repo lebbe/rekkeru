@@ -1,11 +1,9 @@
-// Departure display. The board deep-sleeps between steps; wake() runs after each wake-up:
-//   Timer, local screen:  read sensors, draw the clock and indoor climate, sleep until the next minute.
-//   KEY, local screen:    show the loading screen, fetch from the server, draw the network screen.
-//   Timer, network screen: refresh during the first few minutes, then update the countdown without Wi-Fi.
-//                         Return to the local screen after NET_SCREEN_SECONDS.
-//   KEY, network screen: open the voice screen.
-//   Voice screen:         stay awake and talk (see voice.cpp). KEY, or a few minutes without
-//                         conversation, returns to the local screen. BOOT switches personality.
+// Departure display. The board deep-sleeps between steps; wake() runs after each wake-up and draws the
+// one main screen (clock, departures, calendar, weather, indoor climate), then sleeps until the next minute.
+//   Fetch:  departures, weather, calendar and the clock are fetched over Wi-Fi once a day at FETCH_HOUR, on first
+//           boot, and whenever BOOT is pressed. Between fetches the countdowns are calculated from the
+//           stored departure times, so no Wi-Fi is needed.
+//   KEY:    open the voice screen (see voice.cpp). KEY, or a few minutes without conversation, returns.
 //
 // When connected to a PC, the board stays awake and waits instead of sleeping. Deep sleep disconnects
 // USB, which would otherwise make the PC beep every minute and prevent firmware uploads.
@@ -21,11 +19,8 @@
 #include "screen.h"
 #include "voice.h"
 
-enum class Mode : uint8_t { Local, Net };
-
 // RTC memory survives deep sleep.
-RTC_DATA_ATTR Mode mode = Mode::Local;
-RTC_DATA_ATTR time_t netShownSince;
+RTC_DATA_ATTR time_t nextFetch;  // 0 = fetch on the next wake.
 RTC_DATA_ATTR NetData netData;
 RTC_DATA_ATTR char netError[48];
 
@@ -33,66 +28,79 @@ Climate climate;
 float batteryVolts;
 bool usbActive = false;
 
-void showLocal() {
-  mode = Mode::Local;
-  // Read the sensors here, right before they are needed, instead of on every wake: the network
-  // screen never displays them, so reading them on those wakes would just waste I2C/ADC time.
+// Read the sensors before Wi-Fi heats up the board.
+void readSensors() {
   climate = readClimate();
   batteryVolts = readBatteryVolts();
-  drawLocalScreen(climate, batteryVolts, usbActive);
 }
 
-void showNet() {
-  if (!netData.valid) drawServerDown(netError);
-  else if (netData.departuresError[0] && netData.weatherError[0] && netData.calendarError[0]) drawTeapot();
-  else drawNetScreen(netData, netError, usbActive);  // Each unavailable service gets its own warning line.
+void showMain(bool loading = false) {
+  drawMainScreen(netData, netError, climate, batteryVolts, usbActive, loading);
 }
 
-void fetchAndShowNet() {
-  if (fetchScreen(netData, netError, sizeof(netError))) {
+// The next FETCH_HOUR:00 local time after now.
+time_t nextFetchTime(time_t now) {
+  tm t;
+  localtime_r(&now, &t);
+  t.tm_hour = FETCH_HOUR;
+  t.tm_min = t.tm_sec = 0;
+  t.tm_isdst = -1;
+  time_t at = mktime(&t);
+  if (at <= now) {
+    t.tm_mday++;
+    t.tm_isdst = -1;
+    at = mktime(&t);
+  }
+  return at;
+}
+
+void fetchAndShow() {
+  showMain(true);
+  uint32_t started = millis();
+  bool ok = fetchScreen(netData, netError, sizeof(netError));
+  Serial.printf("[fetch] %s in %u ms: %u departures, %u forecast hours, %u events; errors dep='%s' weather='%s' cal='%s'; net='%s'\n",
+                ok ? "ok" : "FAILED", millis() - started, netData.departureCount, netData.forecastCount,
+                netData.calendarCount, netData.departuresError, netData.weatherError, netData.calendarError, netError);
+  if (ok) {
     netError[0] = '\0';
     setClock(netData.fetchedAt);
   }
-  showNet();
+  time_t now = time(nullptr);
+  bool complete = ok && !netData.departuresError[0] && !netData.weatherError[0] && !netData.calendarError[0];
+  if (complete) nextFetch = nextFetchTime(now);
+  else nextFetch = timeIsValid() ? now + FETCH_RETRY_SECONDS : 0;
+  Serial.printf("[fetch] next fetch at %lld (in %lld s), clock valid=%d\n", (long long)nextFetch,
+                (long long)(nextFetch - now), timeIsValid());
+  showMain();
 }
 
-void onKeyPressed() {
-  if (mode == Mode::Net) {
-    waitForKeyRelease();
-    runVoice();  // Blocks until the voice screen is closed.
-    showLocal();
-  } else {
-    drawMessage("Henter…", "");
-    mode = Mode::Net;
-    // Do not show stale data from a previous session. If fetching fails, show the error screen.
-    // Automatic refreshes keep the existing data and show the error in the footer.
-    netData.valid = false;
-    fetchAndShowNet();
-    netShownSince = time(nullptr);  // Set after fetching, since the clock may have been adjusted.
-  }
-  waitForKeyRelease();
-}
-
-void onNetTimer() {
-  time_t elapsed = time(nullptr) - netShownSince;
-  if (elapsed >= NET_SCREEN_SECONDS) showLocal();
-  else if (elapsed < AUTO_REFRESH_SECONDS) fetchAndShowNet();
-  else showNet();
-}
+bool fetchDue() { return nextFetch == 0 || (timeIsValid() && time(nullptr) >= nextFetch); }
 
 uint32_t secondsToSleep() {
-  time_t now = time(nullptr);
-  if (mode == Mode::Net && now - netShownSince < AUTO_REFRESH_SECONDS) return REFRESH_INTERVAL_SECONDS;
   if (!timeIsValid()) return 60;
-  return 60 - now % 60 + 1;  // Add one second so we do not wake just before the minute changes.
+  return 60 - time(nullptr) % 60 + 1;  // Add one second so we do not wake just before the minute changes.
 }
 
-void wake(esp_sleep_wakeup_cause_t cause) {
-  loadTimeFromRtc();
+void wake(Press press) {
+  bool clockOk = loadTimeFromRtc();
+  Serial.printf("[wake] press=%d usb=%d rtc clock ok=%d time=%lld nextFetch=%lld fetchDue=%d\n", (int)press,
+                usbActive, clockOk, (long long)time(nullptr), (long long)nextFetch, fetchDue());
 
-  if (cause == ESP_SLEEP_WAKEUP_EXT0) onKeyPressed();
-  else if (cause == ESP_SLEEP_WAKEUP_TIMER && mode == Mode::Net) onNetTimer();
-  else showLocal();
+  if (press == Press::Key) {
+    waitForKeyRelease();
+    runVoice();  // Blocks until the voice screen is closed.
+    readSensors();
+    showMain();
+    waitForKeyRelease();
+    return;
+  }
+
+  readSensors();
+  Serial.printf("[sensors] %.1f C, %.0f %%, battery %.2f V (%d %%)\n", climate.temperature, climate.humidity,
+                batteryVolts, batteryPercent(batteryVolts));
+  if (press == Press::Boot || fetchDue()) fetchAndShow();
+  else showMain();
+  if (press == Press::Boot) waitForKeyRelease();
 }
 
 void setup() {
@@ -102,16 +110,18 @@ void setup() {
   tzset();
 
   esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+  Serial.printf("\n[boot] wakeup cause=%d (0=cold boot, 4=timer, 8=ext1)\n", (int)cause);
   screenBegin(cause == ESP_SLEEP_WAKEUP_UNDEFINED);
-  wake(cause);
+  wake(wakePress());
 }
 
 void loop() {
   uint32_t seconds = secondsToSleep();
   usbActive = usbConnected();
+  Serial.printf("[loop] usb=%d, sleeping %u s\n", usbActive, seconds);
   if (!usbActive) {
     screenSleep();
     deepSleep(seconds);  // Never returns. The next wake-up starts in setup().
   }
-  wake(waitForKey(seconds) ? ESP_SLEEP_WAKEUP_EXT0 : ESP_SLEEP_WAKEUP_TIMER);
+  wake(waitForPress(seconds));
 }

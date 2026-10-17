@@ -36,11 +36,10 @@ constexpr uint8_t ES7210_ADDR = 0x40;
 
 constexpr const char *TIMEZONE = "CET-1CEST,M3.5.0,M10.5.0/3";
 
-// How long the network screen stays visible before returning to the local screen.
-constexpr uint32_t NET_SCREEN_SECONDS = 5 * 60;
-// Refresh every REFRESH_INTERVAL_SECONDS during the first AUTO_REFRESH_SECONDS. 0 disables it.
-constexpr uint32_t AUTO_REFRESH_SECONDS = 2 * 60;
-constexpr uint32_t REFRESH_INTERVAL_SECONDS = 30;
+// Departures, calendar and clock are fetched once a day at this local hour, or when BOOT is pressed.
+constexpr int FETCH_HOUR = 7;
+// After a failed fetch, wait this long before trying again.
+constexpr uint32_t FETCH_RETRY_SECONDS = 15 * 60;
 
 constexpr uint32_t WIFI_TIMEOUT_MS = 10000;
 constexpr uint32_t HTTP_TIMEOUT_MS = 5000;

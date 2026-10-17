@@ -19,6 +19,8 @@ const char *const WEEKDAYS[] = {"søndag", "mandag", "tirsdag", "onsdag", "torsd
 const char *const MONTHS[] = {"januar", "februar", "mars",     "april",   "mai",      "juni",
                               "juli",   "august",  "september", "oktober", "november", "desember"};
 
+const char *const SHORT_WEEKDAYS[] = {"søn", "man", "tir", "ons", "tor", "fre", "lør"};
+
 void drawCentered(const char *text, int y) {
   u8g2.drawUTF8((WIDTH - u8g2.getUTF8Width(text)) / 2, y, text);
 }
@@ -93,17 +95,62 @@ void drawDrop(int cx, int cy) {
   u8g2.drawBox(cx - 1, cy + 4, 2, 1);
 }
 
-// Small "USB" badge at the bottom center of the screen, shown while a PC is connected over USB
-// (see usbConnected() in hardware.cpp) so it is obvious why the board is not going to sleep.
-void drawUsbIndicator() {
-  const char *label = "USB";
+// Small inverted badge on the bottom row. "USB" is shown while a PC is connected over USB (see
+// usbConnected() in hardware.cpp) so it is obvious why the board is not going to sleep.
+void drawBadge(const char *label, int x) {
   u8g2.setFont(u8g2_font_helvB10_tf);
   const int boxW = u8g2.getUTF8Width(label) + 14, boxH = 16;
-  const int x = (WIDTH - boxW) / 2, y = 300 - boxH - 4;
+  const int y = 300 - boxH - 4;
   u8g2.drawRBox(x, y, boxW, boxH, 3);
   u8g2.setDrawColor(0);
   u8g2.drawUTF8(x + 7, y + boxH - 4, label);
   u8g2.setDrawColor(1);
+}
+
+void drawUsbIndicator() {
+  u8g2.setFont(u8g2_font_helvB10_tf);
+  drawBadge("USB", (WIDTH - (u8g2.getUTF8Width("USB") + 14)) / 2);
+}
+
+// Copy text into out, shortened with an ellipsis so it fits within maxWidth in the current font.
+void fitText(const char *text, int maxWidth, char *out, size_t size) {
+  strlcpy(out, text, size);
+  if (u8g2.getUTF8Width(out) <= maxWidth) return;
+  size_t len = strlen(out);
+  while (len > 0) {
+    len--;
+    while (len > 0 && (out[len] & 0xC0) == 0x80) len--;  // Do not cut inside a UTF-8 character.
+    out[len] = '\0';
+    char candidate[64];
+    snprintf(candidate, sizeof(candidate), "%s…", out);
+    if (u8g2.getUTF8Width(candidate) <= maxWidth) {
+      strlcpy(out, candidate, size);
+      return;
+    }
+  }
+}
+
+// A warning icon with the message wrapped below it, for a service that is unavailable.
+void drawWarningBlock(int x, int top, int maxWidth, const char *message) {
+  u8g2.setFont(u8g2_font_open_iconic_embedded_2x_t);
+  u8g2.drawGlyph(x, top + 17, WARNING_GLYPH);
+  u8g2.setFont(u8g2_font_helvR12_tf);
+  const char *rest = message;
+  for (int row = 0; row < 3 && *rest; row++) {
+    char line[48];
+    size_t n = 0, lastSpace = 0;
+    while (rest[n]) {
+      if (rest[n] == ' ') lastSpace = n;
+      strlcpy(line, rest, min(n + 2, sizeof(line)));
+      if (u8g2.getUTF8Width(line) > maxWidth) break;
+      n++;
+    }
+    if (rest[n] && lastSpace > 0) n = lastSpace;
+    strlcpy(line, rest, min(n + 1, sizeof(line)));
+    u8g2.drawUTF8(x, top + 40 + row * 16, line);
+    rest += n;
+    while (*rest == ' ') rest++;
+  }
 }
 
 // 32x32 icon with its upper-left corner at (x, top). Glyph codes were checked against the font data;
@@ -189,165 +236,159 @@ void screenSleep() {
   gpio_deep_sleep_hold_en();
 }
 
-void drawLocalScreen(const Climate &climate, float batteryVolts, bool usbConnected) {
+void drawMainScreen(const NetData &data, const char *error, const Climate &climate, float batteryVolts,
+                    bool usbConnected, bool loading) {
+  constexpr int ROWS = 6, ROW_PITCH = 30, FIRST_ROW = 47, COLUMN_X = 133, CALENDAR_X = 144;
   time_t now = time(nullptr);
-  char text[48];
+  char text[64];
   u8g2.clearBuffer();
 
+  // Top row: time, date, battery.
+  formatClock(now, text, sizeof(text));
+  u8g2.setFont(u8g2_font_helvB24_tf);
+  u8g2.drawUTF8(10, 30, text);
+  int timeRight = 10 + u8g2.getUTF8Width(text);
   if (timeIsValid()) {
     tm local;
     localtime_r(&now, &local);
     snprintf(text, sizeof(text), "%s %d. %s", WEEKDAYS[local.tm_wday], local.tm_mday, MONTHS[local.tm_mon]);
     u8g2.setFont(u8g2_font_helvB14_tf);
-    u8g2.drawUTF8(12, 28, text);
+    u8g2.drawUTF8((timeRight + 10 + 300 - u8g2.getUTF8Width(text)) / 2, 28, text);
   }
   drawBattery(batteryVolts, WIDTH - 10, 13);
+  u8g2.drawHLine(0, 40, WIDTH);
 
-  formatClock(now, text, sizeof(text));
-  u8g2.setFont(u8g2_font_logisoso92_tn);
-  drawCentered(text, 170);
-
-  u8g2.setFont(u8g2_font_helvR12_tf);
-  u8g2.drawUTF8(24, 218, "Inne");
-  u8g2.drawUTF8(224, 218, "Luftfuktighet");
-
-  u8g2.setFont(u8g2_font_logisoso32_tf);
-  if (climate.valid) {
-    snprintf(text, sizeof(text), "%.1f °C", climate.temperature);
-    decimalComma(text);
-    u8g2.drawUTF8(24, 266, text);
-    snprintf(text, sizeof(text), "%.0f %%", climate.humidity);
-    u8g2.drawUTF8(224, 266, text);
-  } else {
-    u8g2.drawUTF8(24, 266, "--");
-    u8g2.drawUTF8(224, 266, "--");
-  }
-
-  if (usbConnected) drawUsbIndicator();
-
-  u8g2.sendBuffer();
-}
-
-void drawNetScreen(const NetData &data, const char *error, bool usbConnected) {
-  time_t now = time(nullptr);
-  char text[64];
-  u8g2.clearBuffer();
-
-  // Header
-  u8g2.setFont(u8g2_font_helvB18_tf);
-  u8g2.drawUTF8(10, 28, "T-bane");
-  formatClock(now, text, sizeof(text));
-  drawRight(text, WIDTH - 10, 28);
-  u8g2.drawHLine(0, 38, WIDTH);
-
-  // Departures. Calculate minutes here and skip departures that have already passed.
-  int y = 74;
+  // Departures in the left third. Only the line and the minutes, and passed departures are skipped.
   int shown = 0;
-  for (int i = 0; i < data.departureCount && shown < 4; i++) {
+  for (int i = 0; i < data.departureCount && shown < ROWS; i++) {
     const Departure &dep = data.departures[i];
     long seconds = (long)dep.time - (long)now;
     if (seconds < 0) continue;
 
+    int top = FIRST_ROW + shown * ROW_PITCH;
     u8g2.setFont(u8g2_font_helvB18_tf);
     int lineWidth = u8g2.getUTF8Width(dep.line);
-    int boxWidth = max(32, lineWidth + 12);
-    u8g2.drawRBox(10, y - 22, boxWidth, 28, 4);
+    int boxWidth = max(34, lineWidth + 12);
+    u8g2.drawRBox(8, top, boxWidth, 24, 4);
     u8g2.setDrawColor(0);
-    u8g2.drawUTF8(10 + (boxWidth - lineWidth) / 2, y, dep.line);
+    u8g2.drawUTF8(8 + (boxWidth - lineWidth) / 2, top + 19, dep.line);
     u8g2.setDrawColor(1);
-
-    u8g2.drawUTF8(10 + boxWidth + 12, y, dep.dest);
 
     long minutes = seconds / 60;
     if (minutes < 1) snprintf(text, sizeof(text), "nå");
-    else snprintf(text, sizeof(text), "%ld min", minutes);
-    drawRight(text, WIDTH - 10, y);
-
-    y += 38;
+    else if (minutes < 60) snprintf(text, sizeof(text), "%ld min", minutes);
+    else formatClock(dep.time, text, sizeof(text));  // Far away, e.g. overnight: show the time instead.
+    drawRight(text, COLUMN_X - 8, top + 19);
     shown++;
   }
   if (data.departuresError[0]) {
-    drawWarning(10, 74, data.departuresError, u8g2_font_helvB14_tf);
+    drawWarningBlock(8, FIRST_ROW, COLUMN_X - 16, data.departuresError);
   } else if (shown == 0) {
-    u8g2.setFont(u8g2_font_helvR14_tf);
-    u8g2.drawUTF8(10, 74, "Ingen avganger");
+    u8g2.setFont(u8g2_font_helvR12_tf);
+    u8g2.drawUTF8(8, FIRST_ROW + 19, data.valid ? "Ingen avganger" : "Ingen data");
   }
-  u8g2.drawHLine(0, 205, WIDTH);
 
-  // Weather on the left, using only as much width as its content needs.
-  int weatherRight = 0;
-  if (data.hasWeather) {
-    drawWeatherIcon(data.icon, 10, 216);
-    u8g2.setFont(u8g2_font_helvB24_tf);
-    snprintf(text, sizeof(text), "%d°", data.temp);
-    u8g2.drawUTF8(54, 246, text);
-    weatherRight = 54 + u8g2.getUTF8Width(text);
+  // Calendar in the remaining two thirds. Day and time in bold, then the title.
+  tm today;
+  localtime_r(&now, &today);
+  shown = 0;
+  for (int i = 0; i < data.calendarCount && shown < ROWS; i++) {
+    const CalendarEvent &event = data.calendar[i];
+    if ((time_t)event.end <= now) continue;
+
+    time_t start = event.start;
+    tm local;
+    localtime_r(&start, &local);
+    bool startsToday = start <= now || (local.tm_year == today.tm_year && local.tm_yday == today.tm_yday);
+    char label[24] = "";
+    if (!startsToday) {
+      if (start - now < 6 * 86400) snprintf(label, sizeof(label), "%s", SHORT_WEEKDAYS[local.tm_wday]);
+      else snprintf(label, sizeof(label), "%d/%d", local.tm_mday, local.tm_mon + 1);
+    }
+    if (!event.allDay) {
+      char clock[8];
+      strftime(clock, sizeof(clock), "%H:%M", &local);
+      size_t used = strlen(label);
+      snprintf(label + used, sizeof(label) - used, "%s%s", used ? " " : "", clock);
+    }
+
+    int baseline = FIRST_ROW + shown * ROW_PITCH + 19;
+    int x = CALENDAR_X;
+    if (label[0]) {
+      u8g2.setFont(u8g2_font_helvB14_tf);
+      u8g2.drawUTF8(x, baseline, label);
+      x += u8g2.getUTF8Width(label) + 8;
+    }
     u8g2.setFont(u8g2_font_helvR14_tf);
-    u8g2.drawUTF8(10, 276, data.weatherText);
-    weatherRight = max(weatherRight, 10 + u8g2.getUTF8Width(data.weatherText));
+    fitText(event.title, WIDTH - 8 - x, text, sizeof(text));
+    u8g2.drawUTF8(x, baseline, text);
+    shown++;
+  }
+  if (data.calendarError[0]) {
+    drawWarningBlock(CALENDAR_X, FIRST_ROW, WIDTH - 8 - CALENDAR_X, data.calendarError);
+  } else if (shown == 0) {
+    u8g2.setFont(u8g2_font_helvR12_tf);
+    u8g2.drawUTF8(CALENDAR_X, FIRST_ROW + 19, data.valid ? "Ingen planer" : "Ingen data");
+  }
+  u8g2.drawHLine(0, 225, WIDTH);
+
+  // Weather in the left third, under the departures. The forecast hour that matches the current time
+  // is shown, since the data is only fetched once a day.
+  const WeatherHour *hour = nullptr;
+  for (int i = 0; i < data.forecastCount; i++)
+    if ((time_t)data.forecast[i].time <= now || !hour) hour = &data.forecast[i];
+  if (hour) {
+    drawWeatherIcon(hour->icon, 10, 229);
+    snprintf(text, sizeof(text), "%d°", hour->temp);
+    u8g2.setFont(u8g2_font_helvB24_tf);
+    u8g2.drawUTF8(54, 255, text);
+    u8g2.setFont(u8g2_font_helvR12_tf);
+    fitText(hour->text, COLUMN_X - 16, text, sizeof(text));
+    u8g2.drawUTF8(10, 276, text);
   } else if (data.weatherError[0]) {
     u8g2.setFont(u8g2_font_open_iconic_embedded_4x_t);
-    u8g2.drawGlyph(10, 248, WARNING_GLYPH);
-    u8g2.setFont(u8g2_font_helvR14_tf);
-    u8g2.drawUTF8(10, 276, data.weatherError);
-    weatherRight = 10 + u8g2.getUTF8Width(data.weatherError);
+    u8g2.drawGlyph(10, 261, WARNING_GLYPH);
+    u8g2.setFont(u8g2_font_helvR12_tf);
+    fitText(data.weatherError, COLUMN_X - 16, text, sizeof(text));
+    u8g2.drawUTF8(10, 276, text);
   }
 
-  int calendarX = 10;
-  if (weatherRight > 0) {
-    calendarX = weatherRight + 25;
-    if (data.calendarCount > 0 || data.calendarError[0]) u8g2.drawVLine(weatherRight + 12, 214, 68);
-  }
-
-  // Calendar in the remaining width, up to four lines.
-  if (data.calendarError[0]) drawWarning(calendarX, 232, data.calendarError, u8g2_font_helvR12_tf);
+  // Indoor climate in the right two thirds. Kept clear of the bottom row, where the badges and the
+  // footer live.
+  constexpr int INDOOR_X = COLUMN_X + 15, HUMIDITY_X = COLUMN_X + 147;
   u8g2.setFont(u8g2_font_helvR12_tf);
-  for (int i = 0; i < data.calendarCount; i++) u8g2.drawUTF8(calendarX, 228 + i * 17, data.calendar[i]);
+  u8g2.drawUTF8(INDOOR_X, 241, "Inne");
+  u8g2.drawUTF8(HUMIDITY_X, 241, "Luftfuktighet");
+  u8g2.setFont(u8g2_font_logisoso24_tf);
+  if (climate.valid) {
+    snprintf(text, sizeof(text), "%.1f °C", climate.temperature);
+    decimalComma(text);
+    u8g2.drawUTF8(INDOOR_X, 270, text);
+    snprintf(text, sizeof(text), "%.0f %%", climate.humidity);
+    u8g2.drawUTF8(HUMIDITY_X, 270, text);
+  } else {
+    u8g2.drawUTF8(INDOOR_X, 270, "--");
+    u8g2.drawUTF8(HUMIDITY_X, 270, "--");
+  }
 
-  // Footer
-  char fetched[8];
-  formatClock(data.fetchedAt, fetched, sizeof(fetched));
-  if (error && error[0]) snprintf(text, sizeof(text), "%s · hentet %s", error, fetched);
-  else snprintf(text, sizeof(text), "hentet %s", fetched);
-  u8g2.setFont(u8g2_font_helvR10_tf);
-  u8g2.drawUTF8(10, 297, text);
+  // One solid divider all the way down: timetable | calendar, and weather | indoor climate.
+  u8g2.drawVLine(COLUMN_X, 41, 238);
 
+  // Bottom row: loading badge or fetch error on the left, USB badge in the middle, fetch time on the right.
+  if (loading) {
+    drawBadge("Henter…", 10);
+  } else if (error && error[0]) {
+    drawWarning(10, 296, error, u8g2_font_helvR10_tf);
+  }
   if (usbConnected) drawUsbIndicator();
+  if (data.valid) {
+    char fetched[8];
+    formatClock(data.fetchedAt, fetched, sizeof(fetched));
+    snprintf(text, sizeof(text), "hentet %s", fetched);
+    u8g2.setFont(u8g2_font_helvR10_tf);
+    drawRight(text, WIDTH - 10, 296);
+  }
 
-  u8g2.sendBuffer();
-}
-
-void drawServerDown(const char *detail) {
-  u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_logisoso92_tn);
-  drawCentered("501", 130);
-  u8g2.setFont(u8g2_font_helvB18_tf);
-  drawCentered("Får ikke kontakt med serveren", 185);
-  u8g2.setFont(u8g2_font_helvR14_tf);
-  drawCentered(detail, 220);
-  u8g2.setFont(u8g2_font_helvR10_tf);
-  drawCentered("Trykk KEY for å gå tilbake", 290);
-  u8g2.sendBuffer();
-}
-
-void drawTeapot() {
-  const int cx = 200, cy = 85;  // midten av kroppen
-  u8g2.clearBuffer();
-  for (int r = 0; r < 3; r++) u8g2.drawEllipse(cx + 48, cy - 2, 16 - r, 20 - r);  // hank
-  u8g2.drawTriangle(cx - 30, cy + 2, cx - 30, cy + 22, cx - 72, cy - 26);         // tut
-  u8g2.drawFilledEllipse(cx, cy, 45, 32);                                          // kropp
-  u8g2.drawBox(cx - 28, cy + 30, 56, 6);                                           // fot
-  u8g2.drawFilledEllipse(cx, cy - 32, 22, 8, U8G2_DRAW_UPPER_LEFT | U8G2_DRAW_UPPER_RIGHT);  // lokk
-  u8g2.drawDisc(cx, cy - 43, 5);                                                   // knott
-
-  u8g2.setFont(u8g2_font_helvB24_tf);
-  drawCentered("418 I'm a teapot", 165);
-  u8g2.setFont(u8g2_font_helvR14_tf);
-  drawCentered("Serveren min oppfører seg som en tekanne", 200);
-  u8g2.setFont(u8g2_font_helvR12_tf);
-  drawCentered("Ingen av tjenestene svarer akkurat nå", 228);
-  u8g2.setFont(u8g2_font_helvR10_tf);
-  drawCentered("Trykk KEY for å gå tilbake", 290);
   u8g2.sendBuffer();
 }
 

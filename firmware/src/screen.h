@@ -13,10 +13,8 @@ void screenAnimate(bool on);
 // Hold the display pins so the image remains unchanged while the ESP32 is in deep sleep.
 void screenSleep();
 
-void drawLocalScreen(const Climate &climate, float batteryVolts, bool usbConnected);
-void drawNetScreen(const NetData &data, const char *error, bool usbConnected);
-// Could not contact the server at all (Wi-Fi, network, timeout, or invalid response).
-void drawServerDown(const char *detail);
-// The server responds, but all of its services are unavailable.
-void drawTeapot();
+// The one main screen: clock, date, battery, departures, calendar, and indoor climate. loading shows
+// a "Henter…" badge while a fetch is in progress.
+void drawMainScreen(const NetData &data, const char *error, const Climate &climate, float batteryVolts,
+                    bool usbConnected, bool loading);
 void drawMessage(const char *title, const char *detail);

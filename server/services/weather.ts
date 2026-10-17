@@ -34,8 +34,9 @@ type WeatherResponse = {
     }[]
   }
 }
+type WeatherNow = { temp: number; icon: WeatherIcon; text: string | undefined }
 type WeatherResult =
-  | { temp: number; icon: WeatherIcon; text: string | undefined }
+  | (WeatherNow & { forecast: (WeatherNow & { time: number })[] })
   | { error: string }
 
 let cache: { data: WeatherResponse | null; expires: number } = {
@@ -82,34 +83,45 @@ async function fetchWeather(): Promise<WeatherResult> {
     0,
     series.findLastIndex((entry) => Date.parse(entry.time) <= Date.now()),
   )
-  const now = series[index]
-  if (!now) throw new Error('Ingen værdata ennå')
+  if (!series[index]) throw new Error('Ingen værdata ennå')
 
-  const wet = series
-    .slice(index)
-    .find(
-      (entry) =>
-        day(entry.time) === day(new Date().toISOString()) &&
-        getPrecipitation(symbol(entry)) !== undefined,
-    )
+  // The board only fetches once a day, so describe each of the next 24 hours as if it were "now".
+  const describe = (at: number): WeatherNow => {
+    const now = series[at]!
+    const wet = series
+      .slice(at)
+      .find(
+        (entry) =>
+          day(entry.time) === day(now.time) &&
+          getPrecipitation(symbol(entry)) !== undefined,
+      )
 
-  let text: string | undefined =
-    TEXT[symbol(now).replace(/_.*/, '') as keyof typeof TEXT]
-  if (wet) {
-    const kind = getPrecipitation(symbol(wet))
-    if (kind) {
-      const hour = new Date(wet.time).toLocaleTimeString('nb-NO', {
-        timeZone: 'Europe/Oslo',
-        hour: '2-digit',
-      })
-      text =
-        wet === now ? `${PRECIP[kind]} nå` : `${PRECIP[kind]} fra kl. ${hour}`
+    let text: string | undefined =
+      TEXT[symbol(now).replace(/_.*/, '') as keyof typeof TEXT]
+    if (wet) {
+      const kind = getPrecipitation(symbol(wet))
+      if (kind) {
+        const hour = new Date(wet.time).toLocaleTimeString('nb-NO', {
+          timeZone: 'Europe/Oslo',
+          hour: '2-digit',
+        })
+        text =
+          wet === now ? `${PRECIP[kind]} nå` : `${PRECIP[kind]} fra kl. ${hour}`
+      }
+    }
+    return {
+      temp: Math.round(now.data.instant.details.air_temperature),
+      icon: toIcon(symbol(now)),
+      text,
     }
   }
+
   return {
-    temp: Math.round(now.data.instant.details.air_temperature),
-    icon: toIcon(symbol(now)),
-    text,
+    ...describe(index),
+    forecast: series.slice(index, index + 24).map((entry, offset) => ({
+      time: Math.floor(Date.parse(entry.time) / 1000),
+      ...describe(index + offset),
+    })),
   }
 }
 
