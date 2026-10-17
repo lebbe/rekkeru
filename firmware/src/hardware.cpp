@@ -1,6 +1,7 @@
 #include "hardware.h"
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <Wire.h>
 #include <driver/rtc_io.h>
 #include <driver/usb_serial_jtag.h>
@@ -33,6 +34,19 @@ int64_t daysFromCivil(int y, int m, int d) {
   const int doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
   const int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
   return (int64_t)era * 146097 + doe - 719468;
+}
+
+float batteryMin = 0, batteryMax = 0;  // 0 = nothing logged yet.
+bool batteryRangeLoaded = false;
+
+void loadBatteryRange() {
+  if (batteryRangeLoaded) return;
+  batteryRangeLoaded = true;
+  Preferences prefs;
+  if (!prefs.begin("battery", true)) return;  // Read-only; fails if the namespace does not exist yet.
+  batteryMin = prefs.getFloat("min", 0);
+  batteryMax = prefs.getFloat("max", 0);
+  prefs.end();
 }
 
 }  // namespace
@@ -70,14 +84,43 @@ Climate readClimate() {
   return climate;
 }
 
+// Lowest and highest voltage ever read, kept in NVS flash so they survive deep sleep and a flat battery.
+// The ADC and divider read differently from board to board, so the real range is learned instead of assumed.
 float readBatteryVolts() {
   uint32_t sum = 0;
   for (int i = 0; i < 8; i++) sum += analogReadMilliVolts(PIN_BATTERY);
-  return sum / 8 / 1000.0f * 3.0f;
+  float volts = sum / 8 / 1000.0f * 3.0f;
+
+  // Ignore readings that cannot be a battery (floating pin, no battery connected).
+  if (volts >= BATTERY_PLAUSIBLE_MIN_VOLTS && volts <= BATTERY_PLAUSIBLE_MAX_VOLTS) {
+    loadBatteryRange();
+    // Only write on a clear new extreme, so flash is written a few dozen times over a battery's life.
+    bool newMin = batteryMin == 0 || volts < batteryMin - BATTERY_LOG_STEP_VOLTS;
+    bool newMax = batteryMax == 0 || volts > batteryMax + BATTERY_LOG_STEP_VOLTS;
+    if (newMin || newMax) {
+      if (newMin) batteryMin = volts;
+      if (newMax) batteryMax = volts;
+      Preferences prefs;
+      if (prefs.begin("battery", false)) {
+        prefs.putFloat("min", batteryMin);
+        prefs.putFloat("max", batteryMax);
+        prefs.end();
+      }
+      Serial.printf("[battery] logged range %.3f-%.3f V\n", batteryMin, batteryMax);
+    }
+  }
+  return volts;
 }
 
 int batteryPercent(float volts) {
-  float percent = (volts - BATTERY_EMPTY_VOLTS) / (BATTERY_FULL_VOLTS - BATTERY_EMPTY_VOLTS) * 100.0f;
+  loadBatteryRange();
+  float empty = BATTERY_EMPTY_VOLTS, full = BATTERY_FULL_VOLTS;
+  // The highest voltage read (on a full charge) is 100 %. The lowest read only ever moves "empty"
+  // down: while the battery is still discharging, the lowest reading is just the current one, so using
+  // it directly would show 0 % all the way down.
+  if (batteryMin > 0 && batteryMin < empty) empty = batteryMin;
+  if (batteryMax > empty + BATTERY_MIN_LOGGED_SPAN_VOLTS) full = batteryMax;
+  float percent = (volts - empty) / (full - empty) * 100.0f;
   int rounded = constrain((int)lroundf(percent), 0, 100);
   // The divider and ADC's tolerances mean a resting battery rarely reads exactly at either
   // calibration voltage, so a strict linear mapping would almost never show 0 % or 100 % even

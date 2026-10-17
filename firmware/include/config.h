@@ -20,8 +20,14 @@ constexpr int PIN_PA_CTRL = 46;  // NS4150B speaker amplifier enable. Held low s
 
 // A single-cell Li-ion/LiPo is not usable down to 2.5 V; the board browns out long before that,
 // so treat a more realistic no-load cutoff as empty (see docs/waveshare-esp32-s3-rlcd-42-battery).
-constexpr float BATTERY_EMPTY_VOLTS = 3.3f;
+constexpr float BATTERY_EMPTY_VOLTS = 3.1f;  // 3.3 V showed 0 % for almost a day, so it is not empty.
 constexpr float BATTERY_FULL_VOLTS = 4.2f;
+// The default empty voltage is lowered by the logged minimum if the battery is ever read lower. The
+// logged maximum is full once it is more than this above empty.
+constexpr float BATTERY_MIN_LOGGED_SPAN_VOLTS = 0.5f;
+constexpr float BATTERY_LOG_STEP_VOLTS = 0.01f;       // A new extreme must beat the old by this to be written.
+constexpr float BATTERY_PLAUSIBLE_MIN_VOLTS = 2.8f;   // Readings outside this window are not logged.
+constexpr float BATTERY_PLAUSIBLE_MAX_VOLTS = 4.5f;
 
 // Audio, from Waveshare's XiaoZhi board configuration (boards/waveshare-s3-rlcd-4.2/config.h).
 // ES8311 drives the speaker, ES7210 reads the two microphones. Both share I2S and the I2C bus above.
