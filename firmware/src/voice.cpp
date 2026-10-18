@@ -213,8 +213,11 @@ void runVoice() {
       // Read everything the server has sent, not just one message per round.
       for (int i = 0; i < 8; i++) ws.loop();
 
-      micFill += audioRecord(mic + micFill, sizeof(mic) - micFill);
-      if (micFill == sizeof(mic)) {
+      // Send everything recorded since the last round. Drawing a frame can take longer than 100 ms, and
+      // one message per round would then send less audio than the microphone records.
+      for (size_t got; (got = audioRecord(mic + micFill, sizeof(mic) - micFill)) > 0;) {
+        micFill += got;
+        if (micFill < sizeof(mic)) continue;
         if (!connected) {
         } else if (ws.sendBIN(mic, micFill)) {
           sentBytes += micFill;
