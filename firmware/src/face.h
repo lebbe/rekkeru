@@ -5,7 +5,7 @@
 // Animated faces for the voice screen, drawn with U8g2 primitives. The server picks the face and
 // mood by name; unknown names fall back to the first value.
 
-enum class FaceKind : uint8_t { Waifu, Oracle };
+enum class FaceKind : uint8_t { Waifu, Oracle, Shaman };
 enum class Mood : uint8_t { Neutral, Happy, Sad, Surprised, Angry, Sly };
 enum class VoiceState : uint8_t { Connecting, Listening, Hearing, Thinking, Speaking, Error };
 
@@ -25,6 +25,11 @@ struct Face {
   float lookX = 0, lookY = 0;  // -1..1
   float bob = 0;    // Vertical head offset in pixels
   uint32_t ms = 0;
+
+  // Set by the voice screen from the drum hits in the audio. handUp: the shaman has raised the drumstick
+  // just before a hit. impact: a hit landed a moment ago.
+  bool handUp = false;
+  bool impact = false;
 
   // Animation timers.
   uint32_t nextBlink = 0, blinkStart = 0, nextLook = 0;

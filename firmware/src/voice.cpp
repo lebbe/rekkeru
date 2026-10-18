@@ -23,6 +23,37 @@ VoiceState serverState;
 uint32_t lastActivity;
 uint32_t receivedBytes;  // Diagnostics, per second
 
+// Drum hits the server has announced, as positions in the playback stream (see audioQueuedBytes). The
+// shaman raises the stick shortly before a hit is played and brings it down on the beat.
+constexpr uint32_t BYTES_PER_MS = AUDIO_SAMPLE_RATE * 2 / 1000;
+uint32_t hits[16];
+int hitCount;
+uint32_t lastHit;
+bool hasLastHit;
+
+void clearHits() {
+  hitCount = 0;
+  hasLastHit = false;
+}
+
+void updateDrum(Face &face) {
+  const uint32_t played = audioPlayedBytes();
+  face.handUp = face.impact = false;
+  int keep = 0;
+  for (int i = 0; i < hitCount; i++) {
+    int32_t ahead = (int32_t)(hits[i] - played);  // Bytes until the hit is heard
+    if (ahead <= 0) {
+      lastHit = hits[i];
+      hasLastHit = true;
+      continue;
+    }
+    hits[keep++] = hits[i];
+    if (ahead <= (int32_t)(DRUM_RAISE_MS * BYTES_PER_MS)) face.handUp = true;
+  }
+  hitCount = keep;
+  if (hasLastHit && (int32_t)(played - lastHit) < (int32_t)(DRUM_IMPACT_MS * BYTES_PER_MS)) face.impact = true;
+}
+
 struct Url {
   bool secure;
   char host[64];
@@ -75,6 +106,7 @@ void onText(const uint8_t *payload, size_t length) {
   const char *type = doc["type"] | "";
 
   if (!strcmp(type, "persona")) {
+    clearHits();
     persona = doc["index"] | 0;
     face.kind = faceFromName(doc["face"]);
     face.mood = moodFromName(doc["mood"]);
@@ -84,8 +116,15 @@ void onText(const uint8_t *payload, size_t length) {
     if (serverState == VoiceState::Hearing) lastActivity = millis();
   } else if (!strcmp(type, "mood")) {
     face.mood = moodFromName(doc["mood"]);
+  } else if (!strcmp(type, "drum")) {
+    // Sent just before the audio chunk where the hit starts, so it is that far ahead in the stream.
+    if (hitCount < 16) {
+      uint32_t delay = (uint32_t)(doc["delay_ms"] | 0) + DRUM_VISUAL_DELAY_MS;
+      hits[hitCount++] = audioQueuedBytes() + delay * BYTES_PER_MS;
+    }
   } else if (!strcmp(type, "interrupted")) {
     audioFlush();
+    clearHits();
   } else if (!strcmp(type, "error")) {
     strlcpy(face.status, doc["text"] | "Feil", sizeof(face.status));
   }
@@ -103,6 +142,7 @@ void onEvent(WStype_t type, uint8_t *payload, size_t length) {
       if (VOICE_LOG) Serial.println("[voice] WebSocket disconnected");
       connected = false;
       audioFlush();
+      clearHits();
       break;
     case WStype_TEXT:
       if (VOICE_LOG) Serial.printf("[voice] <- %.*s\n", (int)length, (const char *)payload);
@@ -202,6 +242,7 @@ void runVoice() {
       if (now - lastFrame >= 66) {  // About 15 frames per second
         lastFrame = now;
         face.state = currentState();
+        updateDrum(face);
         animateFace(face, now, audioLevel());
         drawFace(face);
       }

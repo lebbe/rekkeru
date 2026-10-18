@@ -70,6 +70,7 @@ Expression expression(const Face &face) {
     default: e = {{0, 0}, {0, 0}, 0.0f, 1.0f}; break;
   }
   if (face.kind == FaceKind::Oracle) e.lid = max(e.lid, 0.3f);  // Heavy, mysterious lids.
+  if (face.kind == FaceKind::Shaman) e.lid = max(e.lid, 0.25f);  // Calm, half-closed eyes.
   if (face.state == VoiceState::Hearing) {
     e.lid *= 0.5f;
     e.scale *= 1.08f;
@@ -324,6 +325,348 @@ void drawOracle(const Face &face) {
   crystalBall(face);
 }
 
+// ---------------------------------------------------------------- Shaman
+
+// Shapes are built from straight lines and quadratic curves, run through a transform (used to turn the
+// hand), and filled scanline by scanline, because U8g2 only fills triangles, ellipses and boxes.
+struct Pt {
+  float x, y;
+};
+constexpr int MAX_POINTS = 120;
+Pt points[MAX_POINTS];  // Reused for every shape, to keep it off the stack.
+int pointCount;
+float lastX, lastY;  // Last point added, before the transform
+
+struct Transform {
+  float cx = 0, cy = 0, c = 1, s = 0, dx = 0, dy = 0;  // Rotate by atan2(s, c) around (cx, cy), then move
+};
+Transform xf;
+
+enum Fill : uint8_t { SOLID, CLEAR, HATCH, DOTS };
+
+Pt apply(float x, float y) {
+  float rx = x - xf.cx, ry = y - xf.cy;
+  return {rx * xf.c - ry * xf.s + xf.cx + xf.dx, rx * xf.s + ry * xf.c + xf.cy + xf.dy};
+}
+
+void begin() { pointCount = 0; }
+
+void pt(float x, float y) {
+  lastX = x;
+  lastY = y;
+  if (pointCount < MAX_POINTS) points[pointCount++] = apply(x, y);
+}
+
+// Quadratic curve from the last point, bending toward (cx, cy).
+void curve(float cx, float cy, float x1, float y1, int steps = 8) {
+  float x0 = lastX, y0 = lastY;
+  for (int i = 1; i <= steps; i++) {
+    float t = (float)i / steps, u = 1 - t;
+    pt(u * u * x0 + 2 * u * t * cx + t * t * x1, u * u * y0 + 2 * u * t * cy + t * t * y1);
+  }
+}
+
+void ellipsePoly(float cx, float cy, float rx, float ry, int n = 20) {
+  begin();
+  for (int i = 0; i < n; i++) {
+    float a = 2 * PI * i / n;
+    pt(cx + rx * cosf(a), cy + ry * sinf(a));
+  }
+}
+
+// A vertical finger: straight sides and round ends.
+void capsule(float cx, float top, float bottom, float width) {
+  float radius = width / 2;
+  begin();
+  for (int i = 0; i <= 8; i++) {
+    float a = PI + PI * i / 8;
+    pt(cx + radius * cosf(a), top + radius + radius * sinf(a));
+  }
+  for (int i = 0; i <= 8; i++) {
+    float a = PI * i / 8;
+    pt(cx + radius * cosf(a), bottom - radius + radius * sinf(a));
+  }
+}
+
+void fillShape(Fill fill) {
+  float minY = 1e9f, maxY = -1e9f;
+  for (int i = 0; i < pointCount; i++) {
+    minY = min(minY, points[i].y);
+    maxY = max(maxY, points[i].y);
+  }
+  for (int y = max(0, (int)ceilf(minY)); y <= min(299, (int)floorf(maxY)); y++) {
+    const float sy = y + 0.5f;
+    float xs[16];
+    int k = 0;
+    for (int i = 0; i < pointCount; i++) {
+      Pt a = points[i], b = points[(i + 1) % pointCount];
+      if ((a.y <= sy) != (b.y <= sy) && k < 16) xs[k++] = a.x + (sy - a.y) * (b.x - a.x) / (b.y - a.y);
+    }
+    for (int i = 1; i < k; i++)  // Insertion sort
+      for (int j = i; j > 0 && xs[j - 1] > xs[j]; j--) {
+        float t = xs[j];
+        xs[j] = xs[j - 1];
+        xs[j - 1] = t;
+      }
+    for (int j = 0; j + 1 < k; j += 2) {
+      int x0 = lroundf(xs[j]), x1 = lroundf(xs[j + 1]) - 1;
+      if (x1 < x0) continue;
+      g().setDrawColor(fill == SOLID ? INK : PAPER);
+      g().drawHLine(x0, y, x1 - x0 + 1);
+      if (fill == HATCH || fill == DOTS) {
+        g().setDrawColor(INK);
+        for (int x = x0; x <= x1; x++)
+          if (fill == HATCH ? ((x + y) & 3) == 0 : (x % 4 == 0 && y % 4 == 0)) g().drawPixel(x, y);
+      }
+    }
+  }
+  g().setDrawColor(INK);
+}
+
+// Outline of the shape. An open outline leaves out the closing edge. `thick` draws each edge a pixel wider.
+void outline(bool closed, bool thick, uint8_t color = INK) {
+  g().setDrawColor(color);
+  for (int i = 0; i < pointCount - (closed ? 0 : 1); i++) {
+    Pt a = points[i], b = points[(i + 1) % pointCount];
+    g().drawLine(r(a.x), r(a.y), r(b.x), r(b.y));
+    if (thick) {
+      g().drawLine(r(a.x) + 1, r(a.y), r(b.x) + 1, r(b.y));
+      g().drawLine(r(a.x), r(a.y) + 1, r(b.x), r(b.y) + 1);
+    }
+  }
+  g().setDrawColor(INK);
+}
+
+// Line and curve through the transform.
+void tline(float x0, float y0, float x1, float y1, uint8_t color = INK) {
+  Pt a = apply(x0, y0), b = apply(x1, y1);
+  g().setDrawColor(color);
+  g().drawLine(r(a.x), r(a.y), r(b.x), r(b.y));
+  g().setDrawColor(INK);
+}
+
+void tstroke(float x0, float y0, float cx, float cy, float x1, float y1, float radius = 0) {
+  Pt a = apply(x0, y0), c = apply(cx, cy), b = apply(x1, y1);
+  stroke(a.x, a.y, c.x, c.y, b.x, b.y, radius);
+}
+
+void shamanEye(const Face &face, int x, int y, float lid) {
+  const int rx = 11, ry = 6;
+  if (lid > 0.85f) {
+    stroke(x - rx - 1, y, x, y + 5, x + rx + 1, y, 1.5f);
+    return;
+  }
+  g().drawEllipse(x, y, rx, ry);
+  g().drawDisc(x + 1 + r(face.lookX * 4), y + 2 + r(face.lookY * 2), 4);
+  int top = r(y - ry + lid * 2 * ry);
+  g().setDrawColor(PAPER);
+  g().drawBox(x - rx - 1, y - ry - 2, 2 * rx + 3, top - (y - ry) + 2);
+  g().setDrawColor(INK);
+  stroke(x - rx - 1, top + 3, x, top - 3, x + rx + 1, top + 3, 1.5f);  // Heavy lid
+}
+
+// The drum lies flat in front of him, skin up.
+void shamanDrum() {
+  xf = Transform();
+  begin();
+  pt(122, 252);
+  pt(122, 276);
+  curve(200, 300, 278, 276, 12);
+  pt(278, 252);
+  fillShape(DOTS);
+  g().drawLine(122, 252, 122, 276);
+  g().drawLine(278, 252, 278, 276);
+  stroke(122, 276, 200, 300, 278, 276, 1);
+  ellipse(200, 252, 81, 19, INK);
+  ellipse(200, 252, 75, 13, PAPER);
+  g().drawEllipse(200, 252, 70, 12);
+
+  // Sun, ferry, and fjord on the skin, seen at a slant.
+  g().drawEllipse(200, 248, 8, 2);
+  g().drawBox(178, 252, 44, 2);
+  g().drawBox(192, 250, 16, 2);
+  for (int x = 168; x <= 232; x++) {
+    int y = 257 + r(1.2f * sinf(x * 0.5f));
+    g().drawPixel(x, y);
+    g().drawPixel(x, y + 1);
+  }
+}
+
+// The hand holds the stick level with the fist. It rests on the skin, turned 28.6 degrees, and is level
+// (0 degrees) for a moment before each hit.
+void shamanHand(const Face &face) {
+  const float angle = face.handUp ? 0.0f : 28.6f * PI / 180;
+  xf = Transform();
+  xf.cx = 96;
+  xf.cy = 205;
+  xf.c = cosf(angle);
+  xf.s = sinf(angle);
+  xf.dx = 14;
+
+  // The stick is behind the fist, with a pale edge so it shows against the jacket.
+  Pt a = apply(44, 205), b = apply(199, 205);
+  g().setDrawColor(PAPER);
+  stroke(a.x, a.y, (a.x + b.x) / 2, (a.y + b.y) / 2, b.x, b.y, 3);
+  g().setDrawColor(INK);
+  stroke(a.x, a.y, (a.x + b.x) / 2, (a.y + b.y) / 2, b.x, b.y, 2);
+  ellipsePoly(201, 205, 10, 7.5f, 12);
+  fillShape(CLEAR);
+  ellipsePoly(201, 205, 8, 5.5f, 12);
+  fillShape(SOLID);
+
+  // Four fingers seen from the front, little finger first.
+  const float fingers[4][4] = {{66.5f, 186, 222, 21}, {85.5f, 180, 222, 21}, {104.5f, 176, 222, 21}, {124, 178, 222, 22}};
+  for (const auto &f : fingers) {
+    capsule(f[0], f[1], f[2], f[3]);
+    fillShape(CLEAR);
+    outline(true, true);
+  }
+  tstroke(60, 190, 66, 186, 73, 190);
+  tstroke(79, 184, 85, 180, 92, 184);
+  tstroke(98, 180, 104, 176, 111, 180);
+  tstroke(117, 182, 124, 178, 131, 182);
+  tline(60, 214, 72, 214);
+  tline(79, 216, 92, 216);
+  tline(98, 216, 111, 216);
+  tline(62, 218, 70, 218);
+  tline(81, 220, 90, 220);
+  tline(100, 220, 109, 220);
+
+  // The thumb is one shape with the side of the hand: it bulges out, then runs left under the fingers.
+  begin();
+  pt(135, 205);
+  curve(152, 210, 152, 228);
+  curve(152, 242, 138, 242);
+  pt(102, 242);
+  curve(94, 242, 94, 233);
+  curve(94, 224, 104, 223);
+  pt(135, 223);
+  fillShape(CLEAR);
+  outline(false, true);
+  ellipsePoly(105, 232, 7, 5, 12);
+  outline(true, false);
+  tstroke(126, 226, 129, 233, 126, 240);
+  tstroke(143, 214, 147, 222, 144, 232);
+  tline(140, 207, 146, 208);
+
+  // A big signet ring with an ankh, on the ring finger.
+  ellipsePoly(86, 198, 14, 13);
+  fillShape(SOLID);
+  ellipsePoly(86, 192, 4, 4, 10);
+  outline(true, false, PAPER);
+  tline(86, 196, 86, 209, PAPER);
+  tline(87, 196, 87, 209, PAPER);
+  tline(79, 200, 93, 200, PAPER);
+  tline(79, 201, 93, 201, PAPER);
+
+  if (face.impact) {
+    const int ticks[3][4] = {{188, 240, 184, 233}, {200, 241, 202, 233}, {212, 244, 218, 238}};
+    for (const auto &t : ticks) {
+      g().drawLine(t[0], t[1], t[2], t[3]);
+      g().drawLine(t[0] + 1, t[1], t[2] + 1, t[3]);
+    }
+  }
+}
+
+void drawShaman(const Face &face) {
+  const int oy = r(face.bob * 0.5f);  // He moves less than the others.
+  const Expression e = expression(face);
+  xf = Transform();
+
+  // Jacket, solid and wide, with the collar.
+  begin();
+  pt(30, 300);
+  pt(38, 250);
+  curve(46, 218, 108, 206);
+  pt(292, 206);
+  curve(354, 218, 362, 250);
+  pt(370, 300);
+  fillShape(SOLID);
+  g().setDrawColor(PAPER);
+  g().drawLine(150, 206, 200, 236);
+  g().drawLine(200, 236, 250, 206);
+  g().setDrawColor(INK);
+
+  xf.dy = oy;  // From here on, the head.
+
+  // Grey hair along the cheeks.
+  for (int side : {-1, 1}) {
+    begin();
+    pt(200 + side * 54, 84);
+    curve(200 + side * 68, 140, 200 + side * 54, 190);
+    pt(200 + side * 40, 170);
+    pt(200 + side * 40, 90);
+    fillShape(HATCH);
+    outline(true, true);
+  }
+
+  ellipse(200, 118 + oy, 50, 60, PAPER);
+  g().drawEllipse(200, 118 + oy, 50, 60);
+  g().drawEllipse(200, 118 + oy, 49, 59);
+
+  // Beard and moustache are one grey surface, with a line under the moustache.
+  begin();
+  pt(150, 122);
+  curve(146, 188, 200, 212, 12);
+  curve(254, 188, 250, 122, 12);
+  curve(240, 140, 226, 142, 5);
+  curve(212, 134, 200, 140, 5);
+  curve(188, 134, 174, 142, 5);
+  curve(160, 140, 150, 122, 5);
+  fillShape(HATCH);
+  outline(true, true);
+  stroke(174, 142 + oy, 200, 154 + oy, 226, 142 + oy, 1);
+  // The mouth is a dark opening in the beard: a slit when closed, wider with the sound.
+  ellipse(200, 160 + oy, face.mouth > 0.05f ? 7 : 6, r(1.5f + 4 * face.mouth), INK);
+  stroke(168, 176 + oy, 176, 190 + oy, 186, 196 + oy);
+  stroke(232, 176 + oy, 224, 190 + oy, 214, 196 + oy);
+  g().drawLine(200, 168 + oy, 200, 176 + oy);
+  stroke(190, 178 + oy, 196, 192 + oy, 200, 200 + oy);
+  stroke(210, 178 + oy, 204, 192 + oy, 200, 200 + oy);
+
+  // Nose, eyes, brows, and lines at the corners of the eyes.
+  stroke(200, 106 + oy, 196, 122 + oy, 192, 132 + oy, 1);
+  stroke(192, 132 + oy, 200, 138 + oy, 208, 132 + oy, 1);
+  shamanEye(face, 178, 113 + oy, e.lid);
+  shamanEye(face, 222, 113 + oy, e.lid);
+  const int li = e.left.browInner / 2, lo = e.left.browOuter / 2, ri = e.right.browInner / 2, ro = e.right.browOuter / 2;
+  stroke(164, 100 + oy + lo, 178, 94 + oy + (li + lo) / 2, 192, 101 + oy + li, 2);
+  stroke(208, 101 + oy + ri, 222, 94 + oy + (ri + ro) / 2, 236, 100 + oy + ro, 2);
+  for (int side : {-1, 1}) {
+    const int x = 200 + side * 40;
+    g().drawLine(x, 112 + oy, x + side * 6, 108 + oy);
+    g().drawLine(x, 116 + oy, x + side * 7, 116 + oy);
+    g().drawLine(x, 120 + oy, x + side * 6, 124 + oy);
+  }
+
+  // Knitted hat with a ribbed brim.
+  begin();
+  pt(145, 92);
+  curve(142, 28, 200, 26, 14);
+  curve(258, 28, 255, 92, 14);
+  curve(200, 82, 145, 92, 10);
+  fillShape(SOLID);
+  begin();
+  pt(145, 92);
+  curve(200, 82, 255, 92, 10);
+  pt(255, 74);
+  curve(200, 64, 145, 74, 10);
+  fillShape(SOLID);
+  g().setDrawColor(PAPER);
+  stroke(145, 74 + oy, 200, 64 + oy, 255, 74 + oy, 0);
+  const int ribs[8][3] = {{158, 72, 88}, {170, 70, 86}, {182, 69, 85}, {194, 68, 84}, {206, 68, 84}, {218, 69, 85}, {230, 70, 86}, {242, 72, 88}};
+  for (const auto &rib : ribs) g().drawVLine(rib[0], rib[1] + oy, rib[2] - rib[1]);
+  const int knit[6][2] = {{165, 50}, {190, 40}, {215, 50}, {178, 58}, {205, 58}, {226, 40}};
+  for (const auto &k : knit) {
+    g().drawLine(k[0], k[1] + oy, k[0] + 5, k[1] + 5 + oy);
+    g().drawLine(k[0] + 5, k[1] + 5 + oy, k[0] + 10, k[1] + oy);
+  }
+  g().setDrawColor(INK);
+
+  shamanDrum();
+  shamanHand(face);
+}
+
 const char *defaultStatus(VoiceState state) {
   switch (state) {
     case VoiceState::Connecting: return "kobler til…";
@@ -338,7 +681,9 @@ const char *defaultStatus(VoiceState state) {
 }  // namespace
 
 FaceKind faceFromName(const char *name) {
-  return name && !strcmp(name, "oracle") ? FaceKind::Oracle : FaceKind::Waifu;
+  if (name && !strcmp(name, "oracle")) return FaceKind::Oracle;
+  if (name && !strcmp(name, "shaman")) return FaceKind::Shaman;
+  return FaceKind::Waifu;
 }
 
 Mood moodFromName(const char *name) {
@@ -384,6 +729,7 @@ void drawFace(const Face &face) {
   d.clearBuffer();
   d.setDrawColor(INK);
   if (face.kind == FaceKind::Oracle) drawOracle(face);
+  else if (face.kind == FaceKind::Shaman) drawShaman(face);
   else drawWaifu(face);
 
   // Name and status in the top corners, and a hint for the buttons.

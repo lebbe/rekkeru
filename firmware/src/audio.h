@@ -16,6 +16,10 @@ bool audioPlay(const uint8_t *pcm, size_t bytes);
 // Stop playback and drop everything queued.
 void audioFlush();
 bool audioPlaying();
+// Running totals of audio queued and audio played or dropped, in bytes, which wrap around. Compare
+// them to know when something that was queued at a certain point is heard.
+uint32_t audioQueuedBytes();
+uint32_t audioPlayedBytes();
 // Loudness of what is playing right now, 0..1. Used to move the mouth.
 float audioLevel();
 

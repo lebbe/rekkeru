@@ -8,6 +8,8 @@
 //                   text    {"type":"persona","index":0,"name":"Yuki","face":"waifu","mood":"happy"}
 //                           {"type":"state","state":"connecting"|"listening"|"hearing"|"thinking"}
 //                           {"type":"mood","mood":"sad"}
+//                           {"type":"drum","delay_ms":120}  a drum hit starts this long after the start
+//                           of the audio that follows (the drum itself is already in the audio)
 //                           {"type":"interrupted"}  stop playback and drop buffered audio
 //                           {"type":"error","text":"..."}
 
@@ -19,6 +21,16 @@ import {
   type Session,
 } from '@google/genai'
 import type { WebSocket } from 'ws'
+import {
+  Drummer,
+  PATTERNS,
+  PLACEMENTS,
+  STRENGTHS,
+  type Chunk,
+  type Pattern,
+  type Placement,
+  type Strength,
+} from './drum.ts'
 import { MOODS, PERSONAS, systemPrompt, type Mood } from './personas.ts'
 
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-live'
@@ -44,6 +56,42 @@ const setMoodTool = {
     required: ['mood'],
   },
 }
+
+const drumTool = {
+  name: 'drum',
+  description:
+    'Slår på sjamantrommen. Bruk den sparsomt, og kall den før du begynner å snakke (unntatt med plassering under).',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      monster: {
+        type: Type.STRING,
+        enum: [...PATTERNS],
+        description:
+          'slag: ett dypt slag. to_slag: to rolige slag. hjerteslag: tre doble slag. rulle: rulle som svinger og dør ut. reisen: jevn rask puls i fem sekunder.',
+      },
+      styrke: { type: Type.STRING, enum: [...STRENGTHS] },
+      plassering: {
+        type: Type.STRING,
+        enum: [...PLACEMENTS],
+        description:
+          'foran: trommen spilles først, så snakker du. under: trommen spiller svakt under stemmen din.',
+      },
+    },
+    required: ['monster'],
+  },
+}
+
+const aboutTool = (topics: string[]) => ({
+  name: 'om_meg',
+  description:
+    'Slår opp fakta om deg selv og bakgrunnen din. Bruk den når brukeren spør om livet ditt, så du ikke finner på noe.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: { tema: { type: Type.STRING, enum: topics } },
+    required: ['tema'],
+  },
+})
 
 // Gemini speaks at 24 kHz; the board plays 16 kHz (the rate its echo canceller needs). Every three
 // input samples become two, after a [1 2 1] low-pass that removes most of what would alias from
@@ -89,6 +137,8 @@ export function handleVoice(ws: WebSocket, requestedPersona: number) {
   let lastSpeech = 0
   let hearingSince = 0
   let downsample = downsampler()
+  const drummer = new Drummer()
+  let drumTimer: NodeJS.Timeout | undefined
 
   const send = (message: object) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message))
@@ -97,6 +147,18 @@ export function handleVoice(ws: WebSocket, requestedPersona: number) {
     if (next === state) return
     state = next
     send({ type: 'state', state })
+  }
+
+  // Sends audio to the board, with a drum message before every chunk where a hit starts.
+  function sendChunks(chunks: Chunk[]) {
+    for (const { pcm, hitsAt } of chunks) {
+      for (const ms of hitsAt) send({ type: 'drum', delay_ms: Math.round(ms) })
+      if (ws.readyState === ws.OPEN) ws.send(pcm)
+    }
+  }
+  function stopDrum() {
+    clearTimeout(drumTimer)
+    drummer.stop()
   }
 
   function fail(text: string) {
@@ -112,6 +174,7 @@ export function handleVoice(ws: WebSocket, requestedPersona: number) {
     session?.close()
     session = null
     if (!resume) resumeHandle = undefined
+    if (!resume) stopDrum()
     setState('connecting')
 
     try {
@@ -126,7 +189,13 @@ export function handleVoice(ws: WebSocket, requestedPersona: number) {
           systemInstruction: systemPrompt(persona),
           tools: [
             { googleSearch: {} },
-            { functionDeclarations: [setMoodTool] },
+            {
+              functionDeclarations: [
+                setMoodTool,
+                ...(persona.drum ? [drumTool] : []),
+                ...(persona.facts ? [aboutTool(Object.keys(persona.facts))] : []),
+              ],
+            },
           ],
           inputAudioTranscription: {},
           outputAudioTranscription: {},
@@ -166,9 +235,8 @@ export function handleVoice(ws: WebSocket, requestedPersona: number) {
       if (data && ws.readyState === ws.OPEN) {
         // Small messages, so the board never needs a large receive buffer.
         const pcm = downsample(Buffer.from(data, 'base64'))
-        for (let i = 0; i < pcm.length; i += AUDIO_CHUNK) {
-          ws.send(pcm.subarray(i, i + AUDIO_CHUNK))
-        }
+        clearTimeout(drumTimer)
+        sendChunks(drummer.mix(pcm, AUDIO_CHUNK))
         reconnects = 0
       }
     }
@@ -176,7 +244,13 @@ export function handleVoice(ws: WebSocket, requestedPersona: number) {
     // You talked over the persona: the board drops the rest of what it was going to say.
     if (content?.interrupted) {
       downsample = downsampler()
+      stopDrum()
       send({ type: 'interrupted' })
+    }
+    // The answer is over: let what is left of the drum pattern play.
+    if (content?.turnComplete) {
+      clearTimeout(drumTimer)
+      sendChunks(drummer.drain())
     }
     if (content?.inputTranscription?.text)
       console.log('Bruker:', content.inputTranscription.text)
@@ -184,13 +258,33 @@ export function handleVoice(ws: WebSocket, requestedPersona: number) {
       console.log(`${PERSONAS[index]!.name}:`, content.outputTranscription.text)
 
     for (const call of message.toolCall?.functionCalls ?? []) {
-      const mood = call.args?.mood as Mood | undefined
-      if (call.name === 'set_mood' && mood && MOODS.includes(mood)) {
-        send({ type: 'mood', mood })
+      const persona = PERSONAS[index]!
+      let output = 'ok'
+      if (call.name === 'set_mood') {
+        const mood = call.args?.mood as Mood | undefined
+        if (mood && MOODS.includes(mood)) send({ type: 'mood', mood })
+      } else if (call.name === 'drum' && persona.drum) {
+        const pattern = call.args?.monster as Pattern | undefined
+        if (pattern && PATTERNS.includes(pattern)) {
+          const strength = STRENGTHS.includes(call.args?.styrke as Strength)
+            ? (call.args?.styrke as Strength)
+            : 'middels'
+          const placement = PLACEMENTS.includes(call.args?.plassering as Placement)
+            ? (call.args?.plassering as Placement)
+            : 'foran'
+          sendChunks(drummer.play(pattern, strength, placement))
+          // Under speech, but if no speech comes, play the pattern on its own after a while.
+          clearTimeout(drumTimer)
+          if (drummer.active) {
+            drumTimer = setTimeout(() => sendChunks(drummer.drain()), 2500)
+          }
+        }
+      } else if (call.name === 'om_meg' && persona.facts) {
+        output = persona.facts[call.args?.tema as string] ?? 'Ingen opplysninger om det.'
       }
       session?.sendToolResponse({
         functionResponses: [
-          { id: call.id, name: call.name, response: { output: 'ok' } },
+          { id: call.id, name: call.name, response: { output } },
         ],
       })
     }
@@ -249,6 +343,7 @@ export function handleVoice(ws: WebSocket, requestedPersona: number) {
       return
     }
     if (message.type === 'next') {
+      stopDrum()
       index = (index + 1) % PERSONAS.length
       sendPersona()
       connect(false)
@@ -260,6 +355,7 @@ export function handleVoice(ws: WebSocket, requestedPersona: number) {
   ws.on('close', () => {
     closed = true
     clearInterval(ping)
+    clearTimeout(drumTimer)
     session?.close()
     session = null
   })

@@ -44,6 +44,8 @@ volatile bool running;
 volatile bool flushRequested;
 volatile bool playing;
 volatile float level;
+volatile uint32_t queuedBytes;  // Total bytes ever queued for playback and ever played or dropped.
+volatile uint32_t playedBytes;  // The difference is what is waiting in playBuffer.
 
 // Codec registers. The sequences follow Espressif's esp_codec_dev drivers (es8311.c and es7210.c,
 // Apache-2.0), which XiaoZhi uses: slave mode, MCLK = 256 x sample rate, 16-bit samples.
@@ -272,8 +274,8 @@ void playLoop(void *) {
 
   while (running) {
     if (flushRequested) {
-      while (xStreamBufferReceive(playBuffer, mono, sizeof(mono), 0) > 0) {
-      }
+      size_t dropped;
+      while ((dropped = xStreamBufferReceive(playBuffer, mono, sizeof(mono), 0)) > 0) playedBytes = playedBytes + dropped;
       flushRequested = false;
       started = false;
       waitingSince = 0;
@@ -291,6 +293,7 @@ void playLoop(void *) {
     size_t samples = 0;
     if (started) {
       samples = xStreamBufferReceive(playBuffer, mono, sizeof(mono), 0) / 2;
+      playedBytes = playedBytes + samples * 2;
       if (samples == 0) {
         if (VOICE_LOG) Serial.println("[audio] playback ran dry");
         started = false;
@@ -390,6 +393,7 @@ bool audioBegin() {
   running = true;
   flushRequested = false;
   playing = false;
+  queuedBytes = playedBytes = 0;
   xTaskCreatePinnedToCore(playLoop, "play", 4096, nullptr, 6, &playTask, 1);
   xTaskCreatePinnedToCore(recordLoop, "record", 16384, nullptr, 6, &recordTask, 1);
   xTaskCreatePinnedToCore(afeLoop, "afe", 8192, nullptr, 3, &afeTask, 0);
@@ -411,8 +415,13 @@ void audioEnd() {
 }
 
 bool audioPlay(const uint8_t *pcm, size_t bytes) {
-  return playBuffer && xStreamBufferSend(playBuffer, pcm, bytes, 0) == bytes;
+  if (!playBuffer || xStreamBufferSend(playBuffer, pcm, bytes, 0) != bytes) return false;
+  queuedBytes = queuedBytes + bytes;
+  return true;
 }
+
+uint32_t audioQueuedBytes() { return queuedBytes; }
+uint32_t audioPlayedBytes() { return playedBytes; }
 
 void audioFlush() { flushRequested = true; }
 

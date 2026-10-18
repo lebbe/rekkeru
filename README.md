@@ -45,7 +45,7 @@ The API listens on port 3000 by default.
 
 ## Voice chat
 
-The voice screen streams microphone audio over a WebSocket (`/api/v1/voice`) to the server, which relays it to the [Gemini Live API](https://ai.google.dev/gemini-api/docs/live-api). Gemini listens, answers in Norwegian with Google Search when it needs current facts, and streams speech back. It also calls a `set_mood` tool, which changes the face on the screen. Personalities are defined in `server/services/personas.ts`; each one picks a face that the firmware knows how to draw (`waifu` or `oracle`).
+The voice screen streams microphone audio over a WebSocket (`/api/v1/voice`) to the server, which relays it to the [Gemini Live API](https://ai.google.dev/gemini-api/docs/live-api). Gemini listens, answers in Norwegian with Google Search when it needs current facts, and streams speech back. It also calls a `set_mood` tool, which changes the face on the screen. Personalities are defined in `server/services/personas.ts`; each one picks a face that the firmware knows how to draw (`waifu`, `oracle` or `shaman`). Alex, the shaman, also has a `drum` tool: the server synthesizes the drum (`server/services/drum.ts`) and mixes it into the speech, and tells the board when each hit is heard so the face can lift and drop the drumstick; an `om_meg` tool looks up his background so he does not make it up.
 
 Audio is 16-bit mono PCM at 16 kHz in both directions; the server resamples Gemini's 24 kHz speech. As in Waveshare's XiaoZhi firmware, the ES7210 records the microphone and a hardware loopback of the speaker in TDM mode, and ESP-SR's echo canceller removes the speaker from the microphone signal. The microphone therefore stays open while the persona talks, and you can interrupt it.
 
